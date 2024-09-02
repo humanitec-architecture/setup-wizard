@@ -29,6 +29,12 @@
 
 ## Usage
 
+Log in to Humanitec using `humctl`:
+
+```bash
+humctl login
+```
+
 To start the wizard, simply run:
 
 ```bash
@@ -100,12 +106,18 @@ The following AWS permissions are required for humanitec-setup-wizard to success
 
 These permissions allow the wizard to perform necessary actions such as creating roles, managing policies, and interacting with EKS clusters.
 
+## Contact
+
+For questions about this wizard, please reach out to our support team or via [GitHub Issues](https://github.com/humanitec-architecture/setup-wizard/issues).
+
+### Known Issues
+
+Patches for issues listed here will be available soon. 🙂
+
+* During initial configuration of your cloud account, you may receive an error about role assumption (e.g.: error code `CRED-005`). To work around the issue, wait ~10 seconds and restart the wizard using state from the previous session.
+
 ## License & Copyright
 
 (c) 2024– Humanitec (PlatCo GmbH)
 
 Source code for this project is released under the Microsoft Reference Source License (MS-RSL).
-
-## Contact
-
-For questions about this wizard, please reach out to our support team or via [GitHub Issues](https://github.com/humanitec-architecture/setup-wizard/issues).
