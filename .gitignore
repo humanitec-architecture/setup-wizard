@@ -1,0 +1,5 @@
+# MacOS metadata
+.DS_Store
+
+# Build artifact
+humanitec-setup-wizard
