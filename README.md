@@ -10,14 +10,6 @@
 
 ## Installation
 
-### Download the Binary
-
-TBD
-
-### Build from Source
-
-Alternatively, you can build `humanitec-setup-wizard` from source.
-
 1. Clone the repository:
 
     ```bash
@@ -73,7 +65,7 @@ export AWS_REGION=your_region
 
 ### Minimum Required AWS Permissions
 
-The following AWS permissions are required for humctl-wizard to successfully connect and manage your AWS infrastructure:
+The following AWS permissions are required for humanitec-setup-wizard to successfully connect and manage your AWS infrastructure:
 
 ```json
 {
