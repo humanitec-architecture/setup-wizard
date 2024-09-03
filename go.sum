@@ -274,8 +274,6 @@ github.com/hinshun/vt10x v0.0.0-20220119200601-820417d04eec/go.mod h1:Q48J4R4Dvx
 github.com/huandu/xstrings v1.3.3/go.mod h1:y5/lhBue+AyNmUVz9RLU9xbLR0o4KIIExikq4ovT0aE=
 github.com/huandu/xstrings v1.4.0 h1:D17IlohoQq4UcpqD7fDk80P7l+lwAmlFaBHgOipl2FU=
 github.com/huandu/xstrings v1.4.0/go.mod h1:y5/lhBue+AyNmUVz9RLU9xbLR0o4KIIExikq4ovT0aE=
-github.com/humanitec/humanitec-go-autogen v0.0.0-20240708052659-99c84accb79b h1:zNZdGg8l5icmnkqmKtDwLAb3Bu58IKZroHfnmuAs+jI=
-github.com/humanitec/humanitec-go-autogen v0.0.0-20240708052659-99c84accb79b/go.mod h1:WqItJ/MhAHcjP7LIhIt2/NrgXeXRbLuxvXlin7qY0j4=
 github.com/humanitec/humanitec-go-autogen v0.0.0-20240829072338-8a15ab6b8b0a h1:N3jQo1Q4yY2mVYggsItfby7I7jLtmodcXAGUx/YUwE8=
 github.com/humanitec/humanitec-go-autogen v0.0.0-20240829072338-8a15ab6b8b0a/go.mod h1:WqItJ/MhAHcjP7LIhIt2/NrgXeXRbLuxvXlin7qY0j4=
 github.com/imdario/mergo v0.3.11/go.mod h1:jmQim1M+e3UYxmgPu/WyfjB3N3VflVyUjjjwH0dnCYA=
