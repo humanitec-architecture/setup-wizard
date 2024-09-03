@@ -118,6 +118,6 @@ Patches for issues listed here will be available soon. 🙂
 
 ## License & Copyright
 
-(c) 2024– Humanitec (PlatCo GmbH)
+&copy; 2024– Humanitec
 
 Source code for this project is released under the Microsoft Reference Source License (MS-RSL).
