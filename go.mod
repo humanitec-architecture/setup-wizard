@@ -15,6 +15,7 @@ require (
 	github.com/enescakir/emoji v1.0.0
 	github.com/google/uuid v1.6.0
 	github.com/humanitec/humanitec-go-autogen v0.0.0-20240829072338-8a15ab6b8b0a
+	github.com/justinrixx/retryhttp v1.0.1
 	github.com/score-spec/score-go v1.7.3
 	github.com/spf13/cobra v1.8.1
 	golang.org/x/oauth2 v0.22.0
