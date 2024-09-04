@@ -7,8 +7,18 @@
 - Go 1.22.5 or later (for building from source)
 - Cloud account with appropriate permissions
 - Humanitec account
+- Humanitec’s CLI, `humctl`: https://developer.humanitec.com/platform-orchestrator/cli/
+
+    If you prefer not to use `humctl`, the wizard will prompt you to provide your Humanitec API token directly during the setup process. See our [Authentication documentation](https://developer.humanitec.com/platform-orchestrator/reference/api-references/#authentication) for specifics.
 
 ## Installation
+
+### Install from pre-built binaries
+
+1. View the latest Github Releases: https://github.com/humanitec-architecture/setup-wizard/releases.
+2. Download the binary appropriate for your platform from the latest release.
+
+### Install from source
 
 1. Clone the repository:
 
@@ -22,10 +32,6 @@
     ```bash
     go build -o humanitec-setup-wizard
     ```
-
-3. Install Humanitec’s CLI, `humctl`: https://developer.humanitec.com/platform-orchestrator/cli/
-
-   If you prefer not to use `humctl`, the wizard will prompt you to provide your Humanitec API token directly during the setup process. See our [Authentication documentation](https://developer.humanitec.com/platform-orchestrator/reference/api-references/#authentication) for specifics.
 
 ## Usage
 
@@ -95,6 +101,8 @@ The following AWS permissions are required for humanitec-setup-wizard to success
                 "eks:CreateAccessEntry",
                 "eks:CreatePodIdentityAssociation",
                 "eks:AssociateAccessPolicy",
+                "eks:DescribePodIdentityAssociation",
+                "eks:DescribePodIdentityAssociation",
                 "sts:AssumeRole",
                 "elasticloadbalancing:DescribeLoadBalancers"
             ],
@@ -105,6 +113,8 @@ The following AWS permissions are required for humanitec-setup-wizard to success
 ```
 
 These permissions allow the wizard to perform necessary actions such as creating roles, managing policies, and interacting with EKS clusters.
+
+In addition, to install the Humanitec operator and/or agent, you will need deploy permissions access to the cluster you want to connect to Humanitec.
 
 ## Contact
 
@@ -118,6 +128,6 @@ Patches for issues listed here will be available soon. 🙂
 
 ## License & Copyright
 
-&copy; 2024– Humanitec
+(c) 2024– Humanitec (PlatCo GmbH)
 
 Source code for this project is released under the Microsoft Reference Source License (MS-RSL).
