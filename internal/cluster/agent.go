@@ -42,7 +42,7 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	os.RemoveAll(path.Join(homeDir, ".humanitec-setup-wizard", "humanitec-agent"))
+	os.RemoveAll(path.Join(homeDir, ".humctl-wizard", "humanitec-agent"))
 
 	actionPull := action.NewPullWithOpts(action.WithConfig(actionConfig))
 	actionPull.Settings = settings

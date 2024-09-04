@@ -8,8 +8,10 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -38,7 +40,9 @@ type awsProvider struct {
 var humanitecOperatorServiceAccount = "humanitec-operator-controller-manager"
 
 func newAwsProvider(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform) (Provider, error) {
-	config, err := config.LoadDefaultConfig(ctx)
+	config, err := config.LoadDefaultConfig(ctx, config.WithRetryer(func() aws.Retryer {
+		return retry.AddWithMaxAttempts(retry.NewStandard(), 5)
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load aws default configuration, %w", err)
 	}
@@ -134,8 +138,8 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 		}
 	}
 
-	if session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId == "" {
-		if err := CreateResourceAccount(ctx, a.humanitecPlatform.Client, a.humanitecPlatform.OrganizationId, client.CreateResourceAccountRequestRequest{
+	if session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId == "" {		
+		if err := createResourceAccountWithRetries(ctx, a.humanitecPlatform.Client, a.humanitecPlatform.OrganizationId, client.CreateResourceAccountRequestRequest{
 			Id:   humanitecCloudAccountId,
 			Name: humanitecCloudAccountName,
 			Type: "aws-role",
@@ -143,7 +147,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 				"aws_role":    session.State.AwsProvider.CreateCloudIdentity.RoleArn,
 				"external_id": session.State.AwsProvider.CreateCloudIdentity.ExternalId,
 			},
-		}); err != nil {
+		}, 2 * time.Minute); err != nil {
 			return "", fmt.Errorf("failed to create resource account, %w", err)
 		}
 
@@ -607,11 +611,6 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 		message.Info("Pod identity association already created: %s, loading from state", session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
 	}
 
-	err = cluster.RestartOperatorDeployment(ctx, kubeconfig, operatorNamespace)
-	if err != nil {
-		return fmt.Errorf("failed to restart operator deployment, %w", err)
-	}
-
 	err = cluster.ApplySecretStore(ctx, kubeconfig, operatorNamespace, humanitecSecretStoreId, &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "humanitec.io/v1alpha1",
@@ -633,6 +632,11 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	})
 	if err != nil {
 		return fmt.Errorf("failed to register secret store, %w", err)
+	}
+
+	err = cluster.RestartOperatorDeployment(ctx, kubeconfig, operatorNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to restart operator deployment, %w", err)
 	}
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId != "" {

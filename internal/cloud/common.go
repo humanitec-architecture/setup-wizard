@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"time"
 
 	"github.com/humanitec/humanitec-go-autogen"
 	"github.com/humanitec/humanitec-go-autogen/client"
@@ -84,4 +85,26 @@ func CreateResourceAccount(ctx context.Context, humClient *humanitec.Client, org
 		return fmt.Errorf("failed to create or test Cloud Account '%s' in Humanitec. Code: %s - message: %s - details: %v", req.Id, resp.JSON400.Error, resp.JSON400.Message, resp.JSON400.Details)
 	}
 	return fmt.Errorf("failed to create Cloud Account '%s' in Humanitec: unexpected status code %d instead of %d", req.Id, resp.StatusCode(), http.StatusOK)
+}
+
+func createResourceAccountWithRetries(ctx context.Context, client *humanitec.Client, orgID string, req client.CreateResourceAccountRequestRequest, timeout time.Duration) error {
+	timeoutAfter := time.After(timeout)
+	ticker := time.NewTicker(5 * time.Second)
+	tick := ticker.C
+	defer ticker.Stop()
+	
+	var err error
+	for loop := true; loop; {
+		select {
+		case <-timeoutAfter:
+			return fmt.Errorf("error creating resource account (retry timeout exceeded), %w", err)
+		case <-tick:
+			if err = CreateResourceAccount(ctx, client, orgID, req); err != nil {
+				message.Debug("error creating resource account, retrying: %v", err)
+				continue
+			}
+			loop = false
+		}
+	}
+	return nil
 }
