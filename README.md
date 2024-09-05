@@ -5,7 +5,8 @@
 ## Prerequisites
 
 - Go 1.22.5 or later (for building from source)
-- Cloud account with appropriate permissions
+- Cloud account (AWS, Azure, Google Cloud) with appropriate permissions and the local cloud CLI (`aws`, `az`, or `gcloud`) authenticated
+- Kubernetes cluster in your target cloud with API server endpoint accessible from your shell
 - Humanitec account
 - Humanitec’s CLI, `humctl`: https://developer.humanitec.com/platform-orchestrator/cli/
 
@@ -115,6 +116,47 @@ The following AWS permissions are required for humanitec-setup-wizard to success
 These permissions allow the wizard to perform necessary actions such as creating roles, managing policies, and interacting with EKS clusters.
 
 In addition, to install the Humanitec operator and/or agent, you will need deploy permissions access to the cluster you want to connect to Humanitec.
+
+## GCP Provider Documentation
+
+### Authentication
+
+The CLI wizard requires that the [Application Default Credentials](https://cloud.google.com/docs/authentication/provide-credentials-adc) have been set up.
+
+### Minimum Required GCP Permissions
+
+The [Service Account impersonated by the Application Default Credentials](https://cloud.google.com/docs/authentication/provide-credentials-adc#sa-impersonation) or the User associated to them, should have the following roles:
+
+- roles/serviceusage.serviceUsageViewer
+- roles/iam.workloadIdentityPoolAdmin
+- roles/iam.serviceAccountAdmin
+- roles/container.admin
+- roles/iam.roleAdmin
+- roles/resourcemanager.projectIamAdmin
+
+### Cluster and Project pre-requisites
+
+The CLI wizard assumes that:
+
+- In the target cluster an [Ingress Controller](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is available
+- If the [Humanitec Operator](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is installed via CLI wizard:
+  - the [Secret Manager API](https://cloud.google.com/secret-manager/docs/configuring-secret-manager) needs are enabled in the selected GCP Project
+  - The target cluster has [Workload Identity Enabled](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity.)
+
+### Resources Created
+
+During the execution of the CLI wizard, the following GCP / Kubernetes resources will be created:
+
+- To perform [GCP Service account impersonation](https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/gcp/#gcp-service-account-impersonation), the CLI wizard creates:
+  - A Workload Identity Pool and a Workload Identity Provider
+  - An IAM Service Account which will be impersonated by Humanitec
+  - A Policy binding between the IAM Service Account and the Workload Identity Federation
+- To [connect a GKE Cluster](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#gke) via Kubernetes Cluster role + IAM cluster access custom role, the CLI wizard creates:
+  - An IAM Custom Role that is assigned to the IAM Service Account impersonated by Humanitec
+  - A Kubernetes Cluster Role on the target cluster, which is bound to the IAM Service Account impersonated by Humanitec
+  - A [GKE Cluster Humanitec Resource Definition](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#3-create-a-gke-resource-definition)
+
+The CLI wizard outputs the name of every GCP resources generated and stores them in the state session.
 
 ## Contact
 
