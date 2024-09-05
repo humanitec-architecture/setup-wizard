@@ -565,6 +565,10 @@ func selectCloudProvider(ctx context.Context, humanitecPlatform *platform.Humani
 		return nil, fmt.Errorf("failed to get calling user id: %w", err)
 	}
 	message.Info("Logged in to cloud provider as: %s", callingUserId)
+
+	if err = provider.SetupProvider(ctx); err != nil {
+		return nil, fmt.Errorf("failed to set up cloud provider: %w", err)
+	}
 	return provider, nil
 }
 
