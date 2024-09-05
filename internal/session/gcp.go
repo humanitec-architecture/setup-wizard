@@ -13,11 +13,25 @@ type GCPProviderSession struct {
 		HumanitecServiceAccountName          string `json:"humanitecServiceAccountName"`
 	} `json:"cloudIdentity"`
 	GKEClusters struct {
-		ClustersMap map[string]ClustersInfo
+		ClustersMap      map[string]ClustersInfo
+		LoadBalancersMap map[string]LoadBalancerInfo
 	} `json:"gkeClusters"`
+	ConnectCluster struct {
+		IAMCustomRoleName         string `json:"customRoleName"`
+		K8sClusterRoleName        string `json:"k8sClusterRoleName"`
+		K8sClusterRoleBindingName string `json:"k8sClusterRoleBindingName"`
+	} `json:"connectCluster"`
+	ConfigureOperatorAccess struct {
+		SecretStoreId        string `json:"secretStoreId"`
+		IAMRoleSecretManager string `json:"secretManagerIAMRole"`
+	} `json:"configureOperatorAccess"`
 }
 
 type ClustersInfo struct {
 	ID       string `json:"id"`
 	Location string `json:"location"`
+}
+
+type LoadBalancerInfo struct {
+	Ip string `json:"ip_address"`
 }

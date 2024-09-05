@@ -11,5 +11,6 @@ type providerFactoryFunc func(ctx context.Context, humanitecPlatform *platform.H
 func GetProvidersFactory() map[string]providerFactoryFunc {
 	return map[string]providerFactoryFunc{
 		"aws": newAwsProvider,
+		"gcp": NewGCPProvider,
 	}
 }

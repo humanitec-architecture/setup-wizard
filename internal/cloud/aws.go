@@ -65,6 +65,10 @@ func (a *awsProvider) GetCallingUserId(ctx context.Context) (string, error) {
 	return *caller.UserId, nil
 }
 
+func (a *awsProvider) SetupProvider(ctx context.Context) error {
+	return nil
+}
+
 func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAccountId, humanitecCloudAccountName string) (string, error) {
 	iamClient := iam.NewFromConfig(a.awsConfig)
 
@@ -138,7 +142,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 		}
 	}
 
-	if session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId == "" {		
+	if session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId == "" {
 		if err := createResourceAccountWithRetries(ctx, a.humanitecPlatform.Client, a.humanitecPlatform.OrganizationId, client.CreateResourceAccountRequestRequest{
 			Id:   humanitecCloudAccountId,
 			Name: humanitecCloudAccountName,
@@ -147,7 +151,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 				"aws_role":    session.State.AwsProvider.CreateCloudIdentity.RoleArn,
 				"external_id": session.State.AwsProvider.CreateCloudIdentity.ExternalId,
 			},
-		}, 2 * time.Minute); err != nil {
+		}, 2*time.Minute); err != nil {
 			return "", fmt.Errorf("failed to create resource account, %w", err)
 		}
 
@@ -158,7 +162,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 		message.Info("Humanitec Cloud Account created: %s", humanitecCloudAccountId)
 	} else {
 		message.Info("Humanitec Cloud Account already created, loading from state: %s", session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId)
-		if err := CheckResourceAccount(ctx, a.humanitecPlatform.Client, a.humanitecPlatform.OrganizationId, humanitecCloudAccountId); err != nil {
+		if err := checkResourceAccount(ctx, a.humanitecPlatform.Client, a.humanitecPlatform.OrganizationId, humanitecCloudAccountId); err != nil {
 			return "", err
 		}
 	}

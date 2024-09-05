@@ -3,13 +3,17 @@ package cloud
 import (
 	"context"
 	"encoding/base64"
+	"os"
+	"path"
+	"slices"
+	"time"
 
-	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
 
 	"github.com/humanitec/humanitec-go-autogen/client"
+	"github.com/humanitec/humctl-wizard/internal/cluster"
 	"github.com/humanitec/humctl-wizard/internal/message"
 	"github.com/humanitec/humctl-wizard/internal/platform"
 	"github.com/humanitec/humctl-wizard/internal/session"
@@ -23,10 +27,17 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	iam_v1 "google.golang.org/api/iam/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	iam "google.golang.org/api/iam/v1"
+	k8s_rbac "k8s.io/api/rbac/v1"
+	k8s_apierrors "k8s.io/apimachinery/pkg/api/errors"
+	k8s_meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	serviceusage "cloud.google.com/go/serviceusage/apiv1"
+	serviceusagepb "cloud.google.com/go/serviceusage/apiv1/serviceusagepb"
 
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
@@ -44,8 +55,12 @@ const (
 	HumanitecServiceAccountDescription                    = "Service Account to be used by the Humanitec Cloud Account"
 	HumanitecServiceAccountPolicyBindingRole              = "iam.workloadIdentityUser"
 	HumanitecCloudAccountGCPIdentityType                  = "gcp-identity"
-	RoleBaseName                                          = "HumanitecAccessTempcreds"
-	RoleDescription                                       = "GKE access least privilege to deploy via Humanitec"
+	IAMCustomRoleBaseName                                 = "HumanitecGKEAccess"
+	IAMCustomRoleDescription                              = "GKE access least privilege to deploy via Humanitec"
+	K8sClusterRoleBaseName                                = "humanitec-deploy-access"
+	K8sClusterRoleBindingBaseName                         = "humanitec-deploy-access"
+	IAMSecretManagerRoleBaseName                          = "SecretmanagerReadWrite"
+	IAMSecretManagerRoleDescription                       = "Can create new and update existing secrets and read them"
 )
 
 type gcpProvider struct {
@@ -53,15 +68,21 @@ type gcpProvider struct {
 
 	credentials       *google.Credentials
 	humanitecPlatform *platform.HumanitecPlatform
+
+	k8sClient   *kubernetes.Clientset
+	clusterInfo *container.Cluster
 }
 
 // NewGCPProvider retrieves the Google Application Default Credentials.
 // See: https://cloud.google.com/docs/authentication/application-default-credentials#personal
-// User should select which project use.
+// User should select which project use. Secret Manager API should be enabled in that project if the Operator will be chosen as deployment mode.
+// The cluster where the operator will eventually run, should have workload_identity enabled, see: https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity.
 // The user running the script need this set of permissions:
 // - roles/iam.workloadIdentityPoolAdmin
 // - roles/iam.serviceAccountAdmin
-// - roles/container.developer
+// - roles/container.admin
+// - roles/iam.roleAdmin
+// - roles/serviceusage.serviceUsageViewer
 func NewGCPProvider(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform) (Provider, error) {
 	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
@@ -85,13 +106,17 @@ func NewGCPProvider(ctx context.Context, humanitecPlatform *platform.HumanitecPl
 		projectsInfo[project.ProjectId] = project
 	}
 
-	projectID, err := message.Select("Select a GCP project", projectsSelection)
-	if err != nil {
-		return nil, fmt.Errorf("failed to select a GCP project: %w", err)
-	}
+	if storedProject := session.State.GCPProvider.GPCProject.ProjectID; storedProject != "" {
+		message.Info("Using project from previous session: project id '%s'", storedProject)
+	} else {
+		projectID, err := message.Select("Select a GCP project", projectsSelection)
+		if err != nil {
+			return nil, fmt.Errorf("failed to select a GCP project: %w", err)
+		}
 
-	session.State.GCPProvider.GPCProject.ProjectID = projectID
-	session.State.GCPProvider.GPCProject.ProjectNumber = projectsInfo[projectID].ProjectNumber
+		session.State.GCPProvider.GPCProject.ProjectID = projectID
+		session.State.GCPProvider.GPCProject.ProjectNumber = projectsInfo[projectID].ProjectNumber
+	}
 
 	if session.State.GCPProvider.GCPResourcesPostfix == "" {
 		session.State.GCPProvider.GCPResourcesPostfix = randomString(RandomPostfixLength)
@@ -109,17 +134,26 @@ func NewGCPProvider(ctx context.Context, humanitecPlatform *platform.HumanitecPl
 }
 
 func (p *gcpProvider) GetCallingUserId(ctx context.Context) (string, error) {
-	oauth2Service, err := oauth2.NewService(ctx, option.WithCredentials(p.credentials))
+	client, err := google.DefaultClient(ctx, oauth2.UserinfoEmailScope)
+	if err != nil {
+		return "", fmt.Errorf("failed to load default gpc credentials: %w", err)
+	}
+
+	oauth2Service, err := oauth2.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return "", fmt.Errorf("failed to create oauth2 service: %w", err)
 	}
 
-	tokenInfo, err := oauth2Service.Tokeninfo().Do()
+	userInfo, err := oauth2.NewUserinfoV2MeService(oauth2Service).Get().Do()
 	if err != nil {
-		return "", fmt.Errorf("failed to retrieve token info: %w", err)
+		return "", fmt.Errorf("failed to retrieve user info: %w", err)
 	}
 
-	return tokenInfo.UserId, nil
+	return userInfo.Id, nil
+}
+
+func (p *gcpProvider) SetupProvider(ctx context.Context) error {
+	return nil
 }
 
 // Actions taken from: https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/gcp/#gcp-service-account-impersonation
@@ -127,7 +161,7 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 	projectID := session.State.GCPProvider.GPCProject.ProjectID
 	projectNumber := session.State.GCPProvider.GPCProject.ProjectNumber
 
-	iamService, err := iam_v1.NewService(ctx, option.WithCredentials(p.credentials))
+	iamService, err := iam.NewService(ctx, option.WithCredentials(p.credentials))
 	if err != nil {
 		return "", fmt.Errorf("failed to create an IAM service for gcp: %w", err)
 	}
@@ -147,7 +181,7 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 			return "", fmt.Errorf("workload Identity Pool '%s' has been recently deleted, please restore it", storedWliPoolName)
 		} else {
 			wliPoolExists = true
-			message.Info("Workload Identity Pool '%s' exists: %s", storedWliPoolName, wliPool.Description)
+			message.Info("Workload Identity Pool '%s' already exists: %s", storedWliPoolName, wliPool.Description)
 		}
 	}
 
@@ -155,7 +189,7 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 		wliPoolName := WorkloadIdentityPoolBaseName + "-" + session.State.GCPProvider.GCPResourcesPostfix
 		if _, err := iamService.Projects.Locations.WorkloadIdentityPools.Create(
 			fmt.Sprintf("projects/%s/locations/global", projectID),
-			&iam_v1.WorkloadIdentityPool{
+			&iam.WorkloadIdentityPool{
 				Description: WorkloadIdentityPoolDescription,
 			},
 		).WorkloadIdentityPoolId(wliPoolName).Context(ctx).Do(); err != nil {
@@ -168,9 +202,10 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 		message.Info("Workload Identity Pool '%s' created.", wliPoolName)
 	}
 
+	wliPoolName := session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName
 	var wliProviderExists bool
 	if storedWliProviderName := session.State.GCPProvider.CloudIdentity.OidcWorkloadIdentityPoolProviderName; storedWliProviderName != "" {
-		fullWlpName := fmt.Sprintf("projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", projectID, session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName, storedWliProviderName)
+		fullWlpName := fmt.Sprintf("projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", projectID, wliPoolName, storedWliProviderName)
 		wliProvider, err := iamService.Projects.Locations.WorkloadIdentityPools.Providers.Get(fullWlpName).Context(ctx).Do()
 
 		if err != nil {
@@ -181,51 +216,51 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 			return "", fmt.Errorf("workload Identity Pool Provider '%s' has been recently deleted, please restore it", storedWliProviderName)
 		} else {
 			wliProviderExists = true
-			message.Info("Workload Identity Pool Provider '%s' exists: %s", storedWliProviderName, wliProvider.Description)
+			message.Info("Workload Identity Pool Provider '%s/%s' already exists: %s", wliPoolName, storedWliProviderName, wliProvider.Description)
 		}
 	}
 
 	if !wliProviderExists {
 		wliProviderName := OIDCWorkloadIdentityPoolProviderBaseName + "-" + session.State.GCPProvider.GCPResourcesPostfix
 		if _, err := iamService.Projects.Locations.WorkloadIdentityPools.Providers.Create(
-			fmt.Sprintf("projects/%s/locations/global/workloadIdentityPools/%s", projectID, session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName),
-			&iam_v1.WorkloadIdentityPoolProvider{
+			fmt.Sprintf("projects/%s/locations/global/workloadIdentityPools/%s", projectID, wliPoolName),
+			&iam.WorkloadIdentityPoolProvider{
 				Description: OIDCWorkloadIdentityPoolProviderDescription,
-				Oidc: &iam_v1.Oidc{
+				Oidc: &iam.Oidc{
 					IssuerUri: OIDCWorkloadIdentityPoolProviderIssuerURI,
 				},
 				AttributeMapping: map[string]string{OIDCWorkloadIdentityPoolProviderAttributeMappingKey: OIDCWorkloadIdentityPoolProviderAttributeMappingValue},
 			},
 		).WorkloadIdentityPoolProviderId(wliProviderName).Context(ctx).Do(); err != nil {
-			return "", fmt.Errorf("failed to create Workload Identity Pool Provider '%s': %w", wliProviderName, err)
+			return "", fmt.Errorf("failed to create Workload Identity Pool Provider '%s/%s': %w", wliPoolName, wliProviderName, err)
 		}
 		session.State.GCPProvider.CloudIdentity.OidcWorkloadIdentityPoolProviderName = wliProviderName
 		if err := session.Save(); err != nil {
 			return "", fmt.Errorf("failed to save state: %w", err)
 		}
-		message.Info("Workload Identity Pool Provider '%s' created.", wliProviderName)
+		message.Info("Workload Identity Pool Provider '%s/%s' created", wliPoolName, wliProviderName)
 	}
 
 	var humServiceAccountExists bool
 	if humStoredServiceAccount := session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountUniqueID; humStoredServiceAccount != "" {
 		humSA, err := iamService.Projects.ServiceAccounts.Get(fmt.Sprintf("projects/%s/serviceAccounts/%s", projectID, humStoredServiceAccount)).Context(ctx).Do()
 		if err != nil {
-			if notFound, parsedErr := isGoogleGRPCErrorNotFound(err, fmt.Sprintf("failed to check Role '%s' existence", RoleBaseName)); !notFound {
+			if notFound, parsedErr := isGoogleAPIErrorNotFound(err, fmt.Sprintf("failed to check Service Account '%s' existence", humStoredServiceAccount)); !notFound {
 				return "", parsedErr
 			}
 		} else {
 			humServiceAccountExists = true
-			message.Info("Service Account with unique ID '%s' exists: %s", humStoredServiceAccount, humSA.Description)
+			message.Info("Service Account with unique ID '%s' already exists: %s", humStoredServiceAccount, humSA.Email)
 		}
 	}
 	if !humServiceAccountExists {
 		saName := HumanitecServiceAccountName + "-" + session.State.GCPProvider.GCPResourcesPostfix
-		var sa *iam_v1.ServiceAccount
+		var sa *iam.ServiceAccount
 		if sa, err = iamService.Projects.ServiceAccounts.Create(
 			fmt.Sprintf("projects/%s", projectID),
-			&iam_v1.CreateServiceAccountRequest{
+			&iam.CreateServiceAccountRequest{
 				AccountId: saName,
-				ServiceAccount: &iam_v1.ServiceAccount{
+				ServiceAccount: &iam.ServiceAccount{
 					Description: HumanitecServiceAccountDescription,
 				},
 			}).Context(ctx).Do(); err != nil {
@@ -247,26 +282,29 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 	}
 
 	orgID := p.humanitecPlatform.OrganizationId
+	iamPolicyBindingMember := fmt.Sprintf("principal://iam.googleapis.com/projects/%d/locations/global/workloadIdentityPools/%s/subject/%s/%s",
+		projectNumber, session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName, orgID, cloudAccountId)
 	var workloadIdentityUserBindingFound bool
 	for _, binding := range policy.Bindings {
 		if binding.Role == "roles/"+HumanitecServiceAccountPolicyBindingRole {
-			binding.Members = append(binding.Members, fmt.Sprintf("principal://iam.googleapis.com/projects/%d/locations/global/workloadIdentityPools/%s/subject/%s/%s",
-				projectNumber, session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName, orgID, cloudAccountId))
+			if !slices.Contains(binding.Members, iamPolicyBindingMember) {
+				binding.Members = append(binding.Members, iamPolicyBindingMember)
+			}
 			workloadIdentityUserBindingFound = true
 		}
 	}
 	if !workloadIdentityUserBindingFound {
-		policy.Bindings = append(policy.Bindings, &iam_v1.Binding{
-			Role: "roles/" + HumanitecServiceAccountPolicyBindingRole,
-			Members: []string{fmt.Sprintf("principal://iam.googleapis.com/projects/%d/locations/global/workloadIdentityPools/%s/subject/%s/%s",
-				projectNumber, session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName, orgID, cloudAccountId)},
+		policy.Bindings = append(policy.Bindings, &iam.Binding{
+			Role:    "roles/" + HumanitecServiceAccountPolicyBindingRole,
+			Members: []string{iamPolicyBindingMember},
 		})
 	}
 
-	_, err = iamService.Projects.ServiceAccounts.SetIamPolicy(gcpServiceAccountFullID, &iam_v1.SetIamPolicyRequest{
-		Policy: policy,
-	}).Context(ctx).Do()
-	if err != nil {
+	if _, err = iamService.Projects.ServiceAccounts.SetIamPolicy(
+		gcpServiceAccountFullID,
+		&iam.SetIamPolicyRequest{
+			Policy: policy,
+		}).Context(ctx).Do(); err != nil {
 		return "", fmt.Errorf("failed to set IAM policy for Service Account '%s': %w", gcpServiceAccountEmail, err)
 	}
 	message.Info("Policy Binding between the service account '%s' and workload identity federation '%s' created", session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountName, session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName)
@@ -282,15 +320,16 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 	for _, cloudAccount := range *resp.JSON200 {
 		if cloudAccount.Id == cloudAccountId {
 			cloudAccountExists = true
-			message.Info("Cloud Account '%s' exists in Humanitec", cloudAccountId)
+			message.Info("Cloud Account '%s' already exists in Humanitec", cloudAccountId)
 		}
 	}
 	if cloudAccountExists {
-		if err := CheckResourceAccount(ctx, p.humanitecPlatform.Client, orgID, cloudAccountId); err != nil {
+		if err := checkResourceAccount(ctx, p.humanitecPlatform.Client, orgID, cloudAccountId); err != nil {
 			return "", err
 		}
 	} else {
-		if err := CreateResourceAccount(ctx, p.humanitecPlatform.Client, orgID,
+		message.Info("Creating Humanitec Cloud Account. This can take a while as a test connection with GCP Workload Federation is performed too.")
+		if err := createResourceAccountWithRetries(ctx, p.humanitecPlatform.Client, orgID,
 			client.CreateResourceAccountRequestRequest{
 				Id:   cloudAccountId,
 				Name: cloudAccountName,
@@ -300,7 +339,7 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 					"gcp_audience": fmt.Sprintf("//iam.googleapis.com/projects/%d/locations/global/workloadIdentityPools/%s/providers/%s",
 						projectNumber, session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName, session.State.GCPProvider.CloudIdentity.OidcWorkloadIdentityPoolProviderName),
 				},
-			}); err != nil {
+			}, 2*time.Minute); err != nil {
 			return "", err
 		}
 	}
@@ -338,84 +377,443 @@ func (p *gcpProvider) ListClusters(ctx context.Context) ([]string, error) {
 }
 
 func (p *gcpProvider) ListLoadBalancers(ctx context.Context, clusterName string) ([]string, error) {
-	projectID := session.State.GCPProvider.GPCProject.ProjectID
-
-	containerService, err := container.NewService(ctx, option.WithCredentials(p.credentials))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create a container service for gcp: %w", err)
+	if err := p.ensureK8sClient(ctx); err != nil {
+		return nil, fmt.Errorf("failed to generate a kubeconfig and a client to access the cluster '%s': %w", clusterName, err)
 	}
 
-	var clusterLocation string
-	for name, clusterInfo := range session.State.GCPProvider.GKEClusters.ClustersMap {
-		if clusterName == name {
-			clusterLocation = clusterInfo.Location
-		}
-	}
-
-	cluster, err := containerService.Projects.Zones.Clusters.Get(projectID, clusterLocation, clusterName).
-		Name(fmt.Sprintf("projects/%s/locations/%s/clusters/%s", projectID, clusterLocation, clusterName)).Context(ctx).Do()
+	list, err := p.k8sClient.CoreV1().Services("").List(ctx, k8s_meta.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch cluster '%s' info: %w", clusterName, err)
-	}
-	token, err := p.credentials.TokenSource.Token()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve user token: %w", err)
-	}
-	k8sClient, err := getK8sClient(cluster, token.AccessToken)
-	if err != nil {
-		return nil, fmt.Errorf("failed to obtain a client to access the cluster '%s': %w", cluster.Id, err)
-	}
-
-	list, err := k8sClient.CoreV1().Services("").List(ctx, v1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list services in cluster '%s': %w", cluster.Id, err)
+		return nil, fmt.Errorf("failed to list services in cluster '%s': %w", clusterName, err)
 	}
 
 	outputs := make([]string, 0)
+	var loadBalancers = map[string]session.LoadBalancerInfo{}
 	for _, service := range list.Items {
 		if service.Spec.Type == "LoadBalancer" {
-			outputs = append(outputs, service.Name)
+			if len(service.Status.LoadBalancer.Ingress) > 0 {
+				if service.Status.LoadBalancer.Ingress[0].IP != "" {
+					loadBalancers[service.Name+"."+service.Namespace] = session.LoadBalancerInfo{
+						Ip: service.Status.LoadBalancer.Ingress[0].IP,
+					}
+				} else if service.Status.LoadBalancer.Ingress[0].Hostname != "" {
+					loadBalancers[service.Name+"."+service.Namespace] = session.LoadBalancerInfo{
+						Ip: service.Status.LoadBalancer.Ingress[0].Hostname,
+					}
+				}
+			}
+			outputs = append(outputs, service.Name+"."+service.Namespace)
 		}
+	}
+
+	session.State.GCPProvider.GKEClusters.LoadBalancersMap = loadBalancers
+	if err := session.Save(); err != nil {
+		return nil, fmt.Errorf("failed to save state: %w", err)
 	}
 
 	return outputs, nil
 }
 
+// Actions taken from https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#gke.
+// Kubernetes Cluster role + IAM cluster acess custom role Option.
 func (p *gcpProvider) ConnectCluster(ctx context.Context, clusterId, loadBalancerName, humanitecCloudAccountId, humanitecClusterId, humanitecClusterName string) (string, error) {
-	return "", errors.New("not implemented yet")
+	projectID := session.State.GCPProvider.GPCProject.ProjectID
+
+	var iamCustomRoleExists bool
+	iamService, err := iam.NewService(ctx, option.WithCredentials(p.credentials))
+	if err != nil {
+		return "", fmt.Errorf("failed to create iam service: %w", err)
+	}
+
+	if savedRole := session.State.GCPProvider.ConnectCluster.IAMCustomRoleName; savedRole != "" {
+		role, err := iamService.Roles.Get(fmt.Sprintf("projects/%s/roles/%s", projectID, savedRole)).Context(ctx).Do()
+		if err != nil {
+			if notFound, parsedErr := isGoogleGRPCErrorNotFound(err, fmt.Sprintf("failed to check custom role '%s' existence", savedRole)); !notFound {
+				return "", parsedErr
+			}
+			return "", fmt.Errorf("failed to check custom role '%s' existence: %w", savedRole, err)
+		} else {
+			message.Info("IAM Custom Role '%s' already exists: %s", savedRole, role.Description)
+			iamCustomRoleExists = true
+		}
+	}
+
+	roleName := IAMCustomRoleBaseName + "_" + session.State.GCPProvider.GCPResourcesPostfix
+	if !iamCustomRoleExists {
+		if _, err = iamService.Projects.Roles.Create(
+			"projects/"+projectID,
+			&iam.CreateRoleRequest{
+				Role: &iam.Role{
+					Title:               "Humanitec GKE Access",
+					Description:         IAMCustomRoleDescription,
+					IncludedPermissions: []string{"container.clusters.get"},
+				},
+				RoleId: roleName,
+			}).Context(ctx).Do(); err != nil {
+			return "", fmt.Errorf("failed to create role '%s': %w", roleName, err)
+		}
+
+		message.Info("IAM Custom Role '%s' created", roleName)
+		session.State.GCPProvider.ConnectCluster.IAMCustomRoleName = roleName
+		if err = session.Save(); err != nil {
+			return "", fmt.Errorf("failed to save state: %w", err)
+		}
+	}
+
+	gcpServiceAccountEmail := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountName, projectID)
+
+	crmService, err := cloudresourcemanager.NewService(ctx, option.WithCredentials(p.credentials))
+	if err != nil {
+		return "", fmt.Errorf("failed to create a resource manager service: %w", err)
+	}
+	policy, err := crmService.Projects.GetIamPolicy(projectID, &cloudresourcemanager.GetIamPolicyRequest{}).Context(ctx).Do()
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve policy in project '%s': %w", projectID, err)
+	}
+
+	iamBindingMember := fmt.Sprintf("serviceAccount:%s", gcpServiceAccountEmail)
+	var customIAMRoleBindingFound bool
+	for _, binding := range policy.Bindings {
+		if binding.Role == fmt.Sprintf("projects/%s/roles/%s", projectID, roleName) {
+			if !slices.Contains(binding.Members, iamBindingMember) {
+				binding.Members = append(binding.Members, iamBindingMember)
+			}
+			customIAMRoleBindingFound = true
+		}
+	}
+	if !customIAMRoleBindingFound {
+		policy.Bindings = append(policy.Bindings,
+			&cloudresourcemanager.Binding{
+				Role:    fmt.Sprintf("projects/%s/roles/%s", projectID, roleName),
+				Members: []string{iamBindingMember},
+			})
+	}
+
+	if _, err = crmService.Projects.SetIamPolicy(
+		projectID,
+		&cloudresourcemanager.SetIamPolicyRequest{
+			Policy: policy,
+		}).Context(ctx).Do(); err != nil {
+		return "", fmt.Errorf("failed to set IAM policy for Service Account '%s': %w", gcpServiceAccountEmail, err)
+	}
+	message.Info("Policy Binding between the service account '%s' and IAM Custom Role '%s' created", session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountName, roleName)
+
+	if err := p.ensureK8sClient(ctx); err != nil {
+		return "", fmt.Errorf("failed to generate a kubeconfig and a client to access the cluster '%s': %w", session.State.Application.Connect.CloudClusterId, err)
+	}
+
+	var clusterRoleName string
+	if savedClusterRole := session.State.GCPProvider.ConnectCluster.K8sClusterRoleName; savedClusterRole != "" {
+		clusterRoleName = savedClusterRole
+	} else {
+		clusterRoleName = K8sClusterRoleBaseName + "-" + session.State.GCPProvider.GCPResourcesPostfix
+	}
+
+	if alreadyExists, err := ensurek8sClusterRole(ctx, p.k8sClient, clusterRoleName); err != nil {
+		return "", fmt.Errorf("failed to ensure Cluster Role '%s' exists: %w", clusterRoleName, err)
+	} else if alreadyExists {
+		message.Info("Kubernetes Cluster Role '%s' already exists", clusterRoleName)
+	} else {
+		message.Info("Kubernetes Cluster Role '%s' created", clusterRoleName)
+		session.State.GCPProvider.ConnectCluster.K8sClusterRoleName = clusterRoleName
+		if err = session.Save(); err != nil {
+			return "", fmt.Errorf("failed to save state: %w", err)
+		}
+	}
+
+	var clusterRoleBindingExists bool
+	if clusterRoleBindingName := session.State.GCPProvider.ConnectCluster.K8sClusterRoleBindingName; clusterRoleBindingName != "" {
+		if _, err := p.k8sClient.RbacV1().ClusterRoleBindings().Get(ctx, clusterRoleBindingName, k8s_meta.GetOptions{}); err != nil {
+			if !k8s_apierrors.IsNotFound(err) {
+				return "", fmt.Errorf("failed to check Cluster Role '%s' existence: %w", clusterRoleBindingName, err)
+			}
+		} else {
+			message.Info("Kubernetes Cluster Role Binding '%s' already exists", clusterRoleBindingName)
+			clusterRoleBindingExists = true
+		}
+	}
+
+	if !clusterRoleBindingExists {
+		clusterRoleBindingName := K8sClusterRoleBindingBaseName + "-" + session.State.GCPProvider.GCPResourcesPostfix
+		clusterRoleBinding := &k8s_rbac.ClusterRoleBinding{
+			ObjectMeta: k8s_meta.ObjectMeta{
+				Name: clusterRoleBindingName,
+			},
+			Subjects: []k8s_rbac.Subject{
+				{
+					Kind: "User",
+					Name: gcpServiceAccountEmail,
+				},
+			},
+			RoleRef: k8s_rbac.RoleRef{
+				Kind:     "ClusterRole",
+				APIGroup: "rbac.authorization.k8s.io",
+				Name:     session.State.GCPProvider.ConnectCluster.K8sClusterRoleName,
+			},
+		}
+		if _, err := p.k8sClient.RbacV1().ClusterRoleBindings().Create(ctx, clusterRoleBinding, k8s_meta.CreateOptions{}); err != nil {
+			return "", fmt.Errorf("failed to create Kubernetes Custom Role Binding '%s': %w", clusterRoleBindingName, err)
+		}
+		message.Info("Kubernetes Cluster Role Binding '%s' created", clusterRoleBindingName)
+		session.State.GCPProvider.ConnectCluster.K8sClusterRoleBindingName = clusterRoleBindingName
+		if err = session.Save(); err != nil {
+			return "", fmt.Errorf("failed to save state: %w", err)
+		}
+	}
+
+	resp, err := p.humanitecPlatform.Client.GetResourceDefinitionWithResponse(ctx, p.humanitecPlatform.OrganizationId, humanitecClusterId, &client.GetResourceDefinitionParams{})
+	if err != nil {
+		return "", fmt.Errorf("failed to check existence of Resource Definition '%s': %w", humanitecClusterId, err)
+	}
+	if resp.StatusCode() == http.StatusOK {
+		message.Info("Cluster Resource Definition '%s' exists", clusterId)
+	} else if resp.StatusCode() == http.StatusNotFound {
+		clusterInfo := session.State.GCPProvider.GKEClusters.ClustersMap[clusterId]
+		loadBalancerInfo := session.State.GCPProvider.GKEClusters.LoadBalancersMap[loadBalancerName]
+
+		resp, err := p.humanitecPlatform.Client.CreateResourceDefinitionWithResponse(
+			ctx, p.humanitecPlatform.OrganizationId, client.CreateResourceDefinitionRequestRequest{
+				Id:            humanitecClusterId,
+				Name:          humanitecClusterName,
+				Type:          "k8s-cluster",
+				DriverAccount: &humanitecCloudAccountId,
+				DriverType:    "humanitec/k8s-cluster-gke",
+				DriverInputs: &client.ValuesSecretsRefsRequest{
+					Values: &map[string]interface{}{
+						"project_id":   session.State.GCPProvider.GPCProject.ProjectID,
+						"name":         clusterId,
+						"loadbalancer": loadBalancerInfo.Ip,
+						"zone":         clusterInfo.Location,
+					},
+				},
+			})
+		if err != nil {
+			return "", fmt.Errorf("failed to create Cluster Resource Definition '%s': %w", humanitecClusterId, err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			return "", fmt.Errorf("failed to create Cluster Resource Definition '%s': unexpected status code %d instead of %d", humanitecClusterId, resp.StatusCode(), http.StatusOK)
+		}
+		message.Info("Created Cluster Resource Definition '%s'", humanitecClusterId)
+	}
+
+	return humanitecClusterId, nil
 }
 
 func (p *gcpProvider) IsClusterPubliclyAvailable(ctx context.Context, clusterId string) (bool, error) {
-	return false, errors.New("not implemented yet")
+	if err := p.ensureClusterInfo(ctx); err != nil {
+		return false, fmt.Errorf("failed to retrieve cluster '%s' info", clusterId)
+	}
+	if p.clusterInfo.PrivateClusterConfig != nil && p.clusterInfo.PrivateClusterConfig.EnablePrivateNodes {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (p *gcpProvider) WriteKubeConfig(ctx context.Context, clusterId string) (string, error) {
-	return "", errors.New("not implemented yet")
+	if err := p.ensureK8sClient(ctx); err != nil {
+		return "", fmt.Errorf("failed to generate a kubeconfig and a client to access the cluster '%s': %w", clusterId, err)
+	}
+
+	dirname, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	}
+
+	pathToKubeConfig := path.Join(dirname, ".humctl-wizard", "kubeconfig")
+
+	kubeconfig, err := p.getKubeconfig(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to produce kubeconfig to connect to the cluster '%s': %w", clusterId, err)
+	}
+
+	config, err := clientcmd.Load(kubeconfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to produce a clientcmdapi.Config from kubeconfig: %w", err)
+	}
+
+	if err := clientcmd.WriteToFile(*config, pathToKubeConfig); err != nil {
+		return "", fmt.Errorf("failed to save kubeconfig on file '%s': %w", pathToKubeConfig, err)
+	}
+
+	return pathToKubeConfig, nil
 }
 
 func (p *gcpProvider) ListSecretManagers() ([]string, error) {
-	return []string{}, errors.New("not implemented yet")
+	return []string{"gcp-secret-manager"}, nil
 }
 
 func (p *gcpProvider) IsOperatorInstalled(ctx context.Context) (bool, error) {
-	return false, errors.New("not implemented yet")
-}
-
-func (p *gcpProvider) ConfigureOperator(ctx context.Context, platform *platform.HumanitecPlatform, kubeconfig, operatorNamespace, clusterId, secretManager, humanitecSecretStoreId string) error {
-	return errors.New("not implemented yet")
-}
-
-func isGoogleGRPCErrorNotFound(err error, msg string) (bool, error) {
-	st, ok := status.FromError(err)
-	if ok {
-		switch st.Code() {
-		case codes.NotFound:
-			return true, nil
-		case codes.PermissionDenied:
-			return false, fmt.Errorf("%s: permission denied", msg)
+	if session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId != "" {
+		if isSecretStoreCreated, err := findExternalPrimarySecretStore(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId); err != nil {
+			return false, fmt.Errorf("failed to check if secret store exists, %w", err)
+		} else {
+			return isSecretStoreCreated, nil
 		}
 	}
-	return false, fmt.Errorf("%s: %w", msg, err)
+	return false, nil
+}
+
+// Actions taken from:
+// - https://developer.humanitec.com/integration-and-extensions/humanitec-operator/how-tos/connect-to-google-cloud-secret-manager/#enable-workload-identity-for-the-humanitec-operator to enable operator to access SM
+// - https://developer.humanitec.com/integration-and-extensions/humanitec-operator/how-tos/connect-to-google-cloud-secret-manager/#register-the-secret-store-with-the-operator to create Secret Store CR
+func (p *gcpProvider) ConfigureOperator(ctx context.Context, platform *platform.HumanitecPlatform, kubeconfig, operatorNamespace, clusterId, secretManager, humanitecSecretStoreId string) error {
+	if err := p.ensureClusterInfo(ctx); err != nil {
+		return fmt.Errorf("failed to retrieve cluster info: %w", err)
+	}
+	if p.clusterInfo.WorkloadIdentityConfig == nil || p.clusterInfo.WorkloadIdentityConfig.WorkloadPool == "" {
+		return fmt.Errorf("it is needed to enable workload identity on cluster '%s' before proceeding with operator installation", clusterId)
+	}
+
+	svcUsage, err := serviceusage.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create a service usage client: %w", err)
+	}
+	defer svcUsage.Close()
+
+	projectID := session.State.GCPProvider.GPCProject.ProjectID
+	projectNumber := session.State.GCPProvider.GPCProject.ProjectNumber
+
+	smService, err := svcUsage.GetService(ctx, &serviceusagepb.GetServiceRequest{
+		Name: fmt.Sprintf("projects/%s/services/%s", projectID, "secretmanager.googleapis.com"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to check if Secret Manager API is enabled in project '%s': %w", projectID, err)
+	}
+
+	if smService.State != serviceusagepb.State_ENABLED {
+		return fmt.Errorf("please enable Secret Manager API in project '%s' before proceeding", projectID)
+	}
+
+	iamService, err := iam.NewService(ctx, option.WithCredentials(p.credentials))
+	if err != nil {
+		return fmt.Errorf("failed to create iam service: %w", err)
+	}
+
+	var iamCustomRoleExists bool
+	if savedRole := session.State.GCPProvider.ConfigureOperatorAccess.IAMRoleSecretManager; savedRole != "" {
+		role, err := iamService.Roles.Get(fmt.Sprintf("projects/%s/roles/%s", projectID, savedRole)).Context(ctx).Do()
+		if err != nil {
+			if notFound, parsedErr := isGoogleGRPCErrorNotFound(err, fmt.Sprintf("failed to check custom role '%s' existence", savedRole)); !notFound {
+				return parsedErr
+			}
+			return fmt.Errorf("failed to check custom role '%s' existence: %w", savedRole, err)
+		} else {
+			message.Info("IAM Role '%s' exists: %s", savedRole, role.Description)
+			iamCustomRoleExists = true
+		}
+	}
+
+	roleName := IAMSecretManagerRoleBaseName + "_" + session.State.GCPProvider.GCPResourcesPostfix
+	if !iamCustomRoleExists {
+		if _, err = iamService.Projects.Roles.Create(
+			"projects/"+projectID,
+			&iam.CreateRoleRequest{
+				Role: &iam.Role{
+					Title:       "Secret Reader / Write",
+					Description: IAMSecretManagerRoleDescription,
+					IncludedPermissions: []string{
+						"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.secrets.update",
+						"secretmanager.versions.add", "secretmanager.versions.access", "secretmanager.versions.list"},
+				},
+				RoleId: roleName,
+			}).Context(ctx).Do(); err != nil {
+			return fmt.Errorf("failed to create role '%s': %w", roleName, err)
+		}
+
+		message.Info("IAM Role '%s' created", roleName)
+		session.State.GCPProvider.ConfigureOperatorAccess.IAMRoleSecretManager = roleName
+		if err = session.Save(); err != nil {
+			return fmt.Errorf("failed to save state: %w", err)
+		}
+	}
+
+	crmService, err := cloudresourcemanager.NewService(ctx, option.WithCredentials(p.credentials))
+	if err != nil {
+		return fmt.Errorf("failed to create a resource manager service: %w", err)
+	}
+
+	policy, err := crmService.Projects.GetIamPolicy(projectID, &cloudresourcemanager.GetIamPolicyRequest{}).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("failed to retrieve policy in project '%s'", projectID)
+	}
+
+	iamPolicyBindingMember := fmt.Sprintf("principal://iam.googleapis.com/projects/%d/locations/global/workloadIdentityPools/%s.svc.id.goog/subject/ns/%s/sa/humanitec-operator-controller-manager",
+		projectNumber, projectID, operatorNamespace)
+	var customIAMRoleBindingFound bool
+	for _, binding := range policy.Bindings {
+		if binding.Role == fmt.Sprintf("projects/%s/roles/%s", projectID, roleName) {
+			if !slices.Contains(binding.Members, iamPolicyBindingMember) {
+				binding.Members = append(binding.Members, iamPolicyBindingMember)
+			}
+			customIAMRoleBindingFound = true
+		}
+	}
+	if !customIAMRoleBindingFound {
+		policy.Bindings = append(
+			policy.Bindings,
+			&cloudresourcemanager.Binding{
+				Role:    fmt.Sprintf("projects/%s/roles/%s", projectID, roleName),
+				Members: []string{iamPolicyBindingMember},
+			})
+	}
+
+	if _, err = crmService.Projects.SetIamPolicy(
+		projectID,
+		&cloudresourcemanager.SetIamPolicyRequest{
+			Policy: policy,
+		}).Context(ctx).Do(); err != nil {
+		return fmt.Errorf("failed to set IAM policy for Principal '%s': %w", iamPolicyBindingMember, err)
+	}
+	message.Info("Policy Binding between Principal '%s' and IAM Custom Role '%s' created", iamPolicyBindingMember, roleName)
+
+	if err := cluster.RestartOperatorDeployment(ctx, kubeconfig, operatorNamespace); err != nil {
+		return fmt.Errorf("failed to restart operator deployment, %w", err)
+	}
+
+	if err := cluster.ApplySecretStore(ctx, kubeconfig, operatorNamespace, humanitecSecretStoreId, &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "humanitec.io/v1alpha1",
+			"kind":       "SecretStore",
+			"metadata": map[string]interface{}{
+				"name":      humanitecSecretStoreId,
+				"namespace": operatorNamespace,
+				"labels": map[string]interface{}{
+					"app.humanitec.io/default-store": "true",
+				},
+			},
+			"spec": map[string]interface{}{
+				"gcpsm": map[string]interface{}{
+					"projectID": fmt.Sprintf("%d", projectNumber),
+					"auth":      map[string]interface{}{},
+				},
+			},
+		},
+	}); err != nil {
+		return fmt.Errorf("failed to register secret store, %w", err)
+	} else {
+		message.Info("Secret Store CR for secret store '%s' created", humanitecSecretStoreId)
+	}
+
+	alreadyExists, err := ensureSecretStore(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, humanitecSecretStoreId, client.PostOrgsOrgIdSecretstoresJSONRequestBody{
+		Id:      humanitecSecretStoreId,
+		Primary: true,
+		Gcpsm: &client.GCPSMRequest{
+			ProjectId: &projectID,
+		},
+	},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to ensure Secret Store '%s' is registered in Humanitec: %w", humanitecSecretStoreId, err)
+	}
+	if alreadyExists {
+		message.Info("Secret Store '%s' already registered with Humanitec", humanitecSecretStoreId)
+	} else {
+		message.Info("Secret Store '%s' registered with Humanitec", humanitecSecretStoreId)
+	}
+	session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId = humanitecSecretStoreId
+	if err = session.Save(); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+	return nil
 }
 
 func isGoogleAPIErrorNotFound(err error, msg string) (bool, error) {
@@ -425,6 +823,19 @@ func isGoogleAPIErrorNotFound(err error, msg string) (bool, error) {
 		case http.StatusNotFound:
 			return true, nil
 		case http.StatusForbidden:
+			return false, fmt.Errorf("%s: permission denied", msg)
+		}
+	}
+	return false, fmt.Errorf("%s: %w", msg, err)
+}
+
+func isGoogleGRPCErrorNotFound(err error, msg string) (bool, error) {
+	st, ok := status.FromError(err)
+	if ok {
+		switch st.Code() {
+		case codes.NotFound:
+			return true, nil
+		case codes.PermissionDenied:
 			return false, fmt.Errorf("%s: permission denied", msg)
 		}
 	}
@@ -441,55 +852,98 @@ func randomString(n int) string {
 	return string(b)
 }
 
-func getK8sClient(cluster *container.Cluster, token string) (*kubernetes.Clientset, error) {
-	id := cluster.Id
+func (p *gcpProvider) ensureClusterInfo(ctx context.Context) error {
+	projectID := session.State.GCPProvider.GPCProject.ProjectID
+	clusterName := session.State.Application.Connect.CloudClusterId
+
+	containerService, err := container.NewService(ctx, option.WithCredentials(p.credentials))
+	if err != nil {
+		return fmt.Errorf("failed to create a container service for gcp: %w", err)
+	}
+
+	var clusterLocation string
+	for name, clusterInfo := range session.State.GCPProvider.GKEClusters.ClustersMap {
+		if clusterName == name {
+			clusterLocation = clusterInfo.Location
+		}
+	}
+
+	cluster, err := containerService.Projects.Zones.Clusters.Get(projectID, clusterLocation, clusterName).
+		Name(fmt.Sprintf("projects/%s/locations/%s/clusters/%s", projectID, clusterLocation, clusterName)).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("failed to fetch cluster '%s' info: %w", clusterName, err)
+	}
+	p.clusterInfo = cluster
+	return nil
+}
+
+func (p *gcpProvider) getKubeconfig(ctx context.Context) ([]byte, error) {
+	if err := p.ensureClusterInfo(ctx); err != nil {
+		clusterName := session.State.Application.Connect.CloudClusterId
+		return nil, fmt.Errorf("failed to fetch cluster '%s' info: %w", clusterName, err)
+	}
 
 	cert, err := base64.StdEncoding.DecodeString(
-		cluster.MasterAuth.ClusterCaCertificate,
+		p.clusterInfo.MasterAuth.ClusterCaCertificate,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode cluster ca certificate: %w", err)
 	}
 
-	kubeConfig, err := clientcmd.Write(clientcmdapi.Config{
+	token, err := p.credentials.TokenSource.Token()
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve user token: %w", err)
+	}
+
+	return clientcmd.Write(clientcmdapi.Config{
 		APIVersion: "v1",
 		Kind:       "Config",
 		Clusters: map[string]*clientcmdapi.Cluster{
-			id: {
+			"cluster": {
 				CertificateAuthorityData: cert,
-				Server:                   fmt.Sprintf("https://%v", cluster.Endpoint),
+				Server:                   fmt.Sprintf("https://%v", p.clusterInfo.Endpoint),
 			},
 		},
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			id: {
-				Token: token,
+			"authinfo": {
+				Token: token.AccessToken,
 			},
 		},
 		Contexts: map[string]*clientcmdapi.Context{
-			id: {
-				Cluster:  id,
-				AuthInfo: id,
+			"context": {
+				Cluster:  "cluster",
+				AuthInfo: "authinfo",
 			},
 		},
-		CurrentContext: id,
+		CurrentContext: "context",
 	})
+}
+
+func (p *gcpProvider) ensureK8sClient(ctx context.Context) error {
+	if p.k8sClient != nil {
+		return nil
+	}
+
+	kubeConfig, err := p.getKubeconfig(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create kubeconfig: %w", err)
+		return fmt.Errorf("failed to create kubeconfig: %w", err)
 	}
 
 	clientConfig, err := clientcmd.NewClientConfigFromBytes(kubeConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create k8s API client: %w", err)
+		return fmt.Errorf("failed to create k8s API client: %w", err)
 	}
 
 	config, err := clientConfig.ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create k8s API client: %w", err)
+		return fmt.Errorf("failed to create k8s API client: %w", err)
 	}
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create k8s API client: %w", err)
+		return fmt.Errorf("failed to create k8s API client: %w", err)
 	}
-	return client, nil
+
+	p.k8sClient = client
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 
 type Provider interface {
 	GetCallingUserId(ctx context.Context) (string, error)
+	SetupProvider(ctx context.Context) error
 	CreateCloudIdentity(ctx context.Context, cloudAccountId, cloudAccountName string) (string, error)
 	ListClusters(ctx context.Context) ([]string, error)
 	ListLoadBalancers(ctx context.Context, clusterId string) ([]string, error)

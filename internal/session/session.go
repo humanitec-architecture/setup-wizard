@@ -8,7 +8,8 @@ const (
 var State = Session{}
 
 type Session struct {
-	Application ApplicationSession `json:"application"`
-	AwsProvider AwsProviderSession `json:"awsProvider"`
-	GCPProvider GCPProviderSession `json:"gcpProvider"`
+	Application   ApplicationSession   `json:"application"`
+	AwsProvider   AwsProviderSession   `json:"awsProvider"`
+	GCPProvider   GCPProviderSession   `json:"gcpProvider"`
+	AzureProvider AzureProviderSession `json:"azureProvider"`
 }

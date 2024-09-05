@@ -2,56 +2,21 @@ package cloud
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path"
 	"time"
 
 	"github.com/humanitec/humanitec-go-autogen"
 	"github.com/humanitec/humanitec-go-autogen/client"
 	"github.com/humanitec/humctl-wizard/internal/message"
 	"github.com/humanitec/humctl-wizard/internal/utils"
+	k8s_rbac "k8s.io/api/rbac/v1"
+	k8s_apierrors "k8s.io/apimachinery/pkg/api/errors"
+	k8s_meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
-func SaveState(filename string, state interface{}) error {
-	dirname, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get user home directory: %w", err)
-	}
-
-	stateFile, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("failed to marshal state: %w", err)
-	}
-
-	if err := os.WriteFile(path.Join(dirname, filename), stateFile, 0600); err != nil {
-		return fmt.Errorf("failed to write state file: %w", err)
-	}
-
-	return nil
-}
-
-func LoadState(filename string) ([]byte, error) {
-	dirname, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user home directory: %w", err)
-	}
-
-	stateFile, err := os.ReadFile(path.Join(dirname, filename))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to read state file: %w", err)
-	} else {
-		return stateFile, nil
-	}
-}
-
-func CheckResourceAccount(ctx context.Context, client *humanitec.Client, orgID, cloudAccountID string) error {
+func checkResourceAccount(ctx context.Context, client *humanitec.Client, orgID, cloudAccountID string) error {
 	resp, err := client.CheckResourceAccountWithResponse(ctx, orgID, cloudAccountID)
 	if err != nil {
 		return fmt.Errorf("failed to check Cloud Account '%s' with Humanitec: %w", cloudAccountID, err)
@@ -70,7 +35,7 @@ func CheckResourceAccount(ctx context.Context, client *humanitec.Client, orgID, 
 	return fmt.Errorf("failed to check Cloud Account '%s' with Humanitec: unexpected status code %d", cloudAccountID, resp.StatusCode())
 }
 
-func CreateResourceAccount(ctx context.Context, humClient *humanitec.Client, orgID string, req client.CreateResourceAccountRequestRequest) error {
+func createResourceAccount(ctx context.Context, humClient *humanitec.Client, orgID string, req client.CreateResourceAccountRequestRequest) error {
 	resp, err := humClient.CreateResourceAccountWithResponse(ctx, orgID,
 		&client.CreateResourceAccountParams{
 			CheckCredential: utils.Ref(true),
@@ -92,14 +57,14 @@ func createResourceAccountWithRetries(ctx context.Context, client *humanitec.Cli
 	ticker := time.NewTicker(5 * time.Second)
 	tick := ticker.C
 	defer ticker.Stop()
-	
+
 	var err error
 	for loop := true; loop; {
 		select {
 		case <-timeoutAfter:
 			return fmt.Errorf("error creating resource account (retry timeout exceeded), %w", err)
 		case <-tick:
-			if err = CreateResourceAccount(ctx, client, orgID, req); err != nil {
+			if err = createResourceAccount(ctx, client, orgID, req); err != nil {
 				message.Debug("error creating resource account, retrying: %v", err)
 				continue
 			}
@@ -107,4 +72,95 @@ func createResourceAccountWithRetries(ctx context.Context, client *humanitec.Cli
 		}
 	}
 	return nil
+}
+
+func ensurek8sClusterRole(ctx context.Context, k8sClient *kubernetes.Clientset, roleName string) (bool, error) {
+	if _, err := k8sClient.RbacV1().ClusterRoles().Get(ctx, roleName, k8s_meta.GetOptions{}); err != nil {
+		if !k8s_apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("failed to check Cluster Role '%s' existence: %w", roleName, err)
+		}
+	} else {
+		return true, nil
+	}
+
+	clusterRole := &k8s_rbac.ClusterRole{
+		ObjectMeta: k8s_meta.ObjectMeta{
+			Name: roleName,
+		},
+		Rules: []k8s_rbac.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"namespaces"},
+				Verbs:     []string{"create", "get", "list", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"humanitec.io"},
+				Resources: []string{"resources", "secretmappings", "workloadpatches", "workloads"},
+				Verbs:     []string{"create", "get", "list", "update", "patch", "delete", "deletecollection", "watch"},
+			},
+			{
+				APIGroups: []string{"batch"},
+				Resources: []string{"job"},
+				Verbs:     []string{"get", "list"},
+			},
+			{
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments", "statefulsets", "replicasets", "daemonsets"},
+				Verbs:     []string{"get", "list"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs:     []string{"get", "list"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods/logs"},
+				Verbs:     []string{"get", "list"},
+			},
+			{
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments/scale"},
+				Verbs:     []string{"update"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"get"},
+			},
+		},
+	}
+	if _, err := k8sClient.RbacV1().ClusterRoles().Create(ctx, clusterRole, k8s_meta.CreateOptions{}); err != nil {
+		return false, fmt.Errorf("failed to create Cluster Role '%s': %w", roleName, err)
+	}
+
+	return false, nil
+}
+
+func findExternalPrimarySecretStore(ctx context.Context, humClient *humanitec.Client, orgId, secretStoreId string) (bool, error) {
+	resp, err := humClient.GetOrgsOrgIdSecretstoresStoreIdWithResponse(ctx, orgId, secretStoreId)
+	if err != nil {
+		return false, fmt.Errorf("failed to get Secret Store '%s' in Humanitec: %w", secretStoreId, err)
+	}
+	if resp.StatusCode() == http.StatusNotFound {
+		return false, nil
+	} else if resp.JSON200 != nil {
+		return resp.JSON200.Primary, nil
+	} else {
+		return false, fmt.Errorf("failed to get Secret Store '%s' in Humanitec: unexpected status code %d instead of %d", secretStoreId, resp.StatusCode(), http.StatusOK)
+	}
+}
+
+func ensureSecretStore(ctx context.Context, humClient *humanitec.Client, orgId, secretStoreId string, reqBody client.PostOrgsOrgIdSecretstoresJSONRequestBody) (bool, error) {
+	resp, err := humClient.PostOrgsOrgIdSecretstoresWithResponse(ctx, orgId, reqBody)
+	if err != nil {
+		return false, fmt.Errorf("failed to create Secret Store '%s' in Humanitec: %w", secretStoreId, err)
+	}
+	if resp.StatusCode() == http.StatusCreated {
+		return false, nil
+	} else if resp.StatusCode() == http.StatusConflict {
+		return true, nil
+	} else {
+		return false, fmt.Errorf("failed to create Secret Store '%s' in Humanitec: unexpected status code %d instead of %d", secretStoreId, resp.StatusCode(), http.StatusCreated)
+	}
 }
