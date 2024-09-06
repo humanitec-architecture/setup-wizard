@@ -103,26 +103,27 @@ var connectCmd = &cobra.Command{
 			return fmt.Errorf("failed to check if operator is already installed: %w", err)
 		}
 		if !isOperatorInstalled {
-			var ifInstallOperator bool
-			if session.State.Application.Connect.DoInstallOperator != nil {
-				ifInstallOperator = *session.State.Application.Connect.DoInstallOperator
-				message.Info("Using previous session value for install operator: %t", ifInstallOperator)
-			} else {
-				ifInstallOperator, err = message.BoolSelect("Do you want to install Humanitec Operator?")
+			internalSecrets, err := humanitecPlatform.CheckInternalSecrets(ctx)
+			if internalSecrets {
+				proceedWithOperator, err := message.BoolSelect(`Your organization has some definitions or shared values with secret inputs stored in the Internal Humanitec Secret Store. 
+Deployments involving these entities will not work anymore proceeding with the Wizard execution. Do you want to proceed anyway and switch your organization to Operator deployment mode?`)
 				if err != nil {
 					return fmt.Errorf("failed to select if install operator: %w", err)
 				}
-				session.State.Application.Connect.DoInstallOperator = &ifInstallOperator
-				if err := session.Save(); err != nil {
-					return fmt.Errorf("failed to save session: %w", err)
+				if !proceedWithOperator {
+					return errors.New("wizard aborted, Operator mode is the only deployment mode available via Wizard")
 				}
 			}
-			if ifInstallOperator {
-				err = installOperator(ctx, humanitecPlatform, provider, kubeConfigPath, clusterId)
-				if err != nil {
-					return fmt.Errorf("failed to install operator: %w", err)
-				}
+
+			if err != nil {
+				return fmt.Errorf("failed to check if resource definitions or shared secrets contain internal values: %w", err)
 			}
+
+			err = installOperator(ctx, humanitecPlatform, provider, kubeConfigPath, clusterId)
+			if err != nil {
+				return fmt.Errorf("failed to install operator: %w", err)
+			}
+			message.Info("Humanitec Operator installed")
 		} else {
 			message.Info("Humanitec Operator already installed")
 		}
