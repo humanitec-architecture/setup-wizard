@@ -868,8 +868,7 @@ func (p *gcpProvider) ensureClusterInfo(ctx context.Context) error {
 		}
 	}
 
-	cluster, err := containerService.Projects.Zones.Clusters.Get(projectID, clusterLocation, clusterName).
-		Name(fmt.Sprintf("projects/%s/locations/%s/clusters/%s", projectID, clusterLocation, clusterName)).Context(ctx).Do()
+	cluster, err := containerService.Projects.Locations.Clusters.Get(fmt.Sprintf("projects/%s/locations/%s/clusters/%s", projectID, clusterLocation, clusterName)).Context(ctx).Do()
 	if err != nil {
 		return fmt.Errorf("failed to fetch cluster '%s' info: %w", clusterName, err)
 	}

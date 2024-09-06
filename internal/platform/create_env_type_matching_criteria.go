@@ -15,7 +15,7 @@ func (p *HumanitecPlatform) CreateEnvTypeMatchingCriteria(ctx context.Context, e
 		return fmt.Errorf("failed to create matching criteria: %w", err)
 	}
 	if createMatchingCriteriaResp.StatusCode() == 409 {
-		return nil
+		return fmt.Errorf("same matching criteria applied to another resource definition: %s, remove them from it before proceeding", createMatchingCriteriaResp.JSON409.Message)
 	}
 	if createMatchingCriteriaResp.StatusCode() != 200 {
 		return fmt.Errorf("humanitec API returned unexpected status code: %d with body: %s", createMatchingCriteriaResp.StatusCode(), string(createMatchingCriteriaResp.Body))
