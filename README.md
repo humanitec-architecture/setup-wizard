@@ -139,9 +139,8 @@ The [Service Account impersonated by the Application Default Credentials](https:
 The CLI wizard assumes that:
 
 - In the target cluster an [Ingress Controller](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is available
-- If the [Humanitec Operator](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is installed via CLI wizard:
-  - the [Secret Manager API](https://cloud.google.com/secret-manager/docs/configuring-secret-manager) needs are enabled in the selected GCP Project
-  - The target cluster has [Workload Identity Enabled](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity.)
+- The [Secret Manager API](https://cloud.google.com/secret-manager/docs/configuring-secret-manager) is enabled in the selected GCP Project
+- The target cluster has [Workload Identity Enabled](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
 
 ### Resources Created
 
