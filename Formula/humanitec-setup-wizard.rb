@@ -5,20 +5,20 @@
 class HumanitecSetupWizard < Formula
   desc ""
   homepage "https://github.com/humanitec-architecture/setup-wizard"
-  version "0.6"
+  version "0.7"
 
   on_macos do
     on_intel do
-      url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.6/setup-wizard_0.6_darwin_amd64.tar.gz"
-      sha256 "116e4d0353c502046fa5123a52d777030e7a8fc0ffd8c2d2098d6f8d83571e15"
+      url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.7/setup-wizard_0.7_darwin_amd64.tar.gz"
+      sha256 "ef3c65ecdf98b7c7b52edc59de995a53940046d34e2fc24309b5f70558b43548"
 
       def install
         bin.install "humanitec-setup-wizard"
       end
     end
     on_arm do
-      url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.6/setup-wizard_0.6_darwin_arm64.tar.gz"
-      sha256 "781da05b7c7d11f8c1b4987e46eff6492a1e25a7d2fcd3119d15fae0496bfb17"
+      url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.7/setup-wizard_0.7_darwin_arm64.tar.gz"
+      sha256 "7d1d4b715e66ab8f5ee3d6617b6c7b44a0ae36c447a0704152cccd464d14dac2"
 
       def install
         bin.install "humanitec-setup-wizard"
@@ -29,8 +29,8 @@ class HumanitecSetupWizard < Formula
   on_linux do
     on_intel do
       if Hardware::CPU.is_64_bit?
-        url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.6/setup-wizard_0.6_linux_amd64.tar.gz"
-        sha256 "1de975035364497def0c99b3834d7996e4ec91ba7c2216bc8ad6010ca6f7fe04"
+        url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.7/setup-wizard_0.7_linux_amd64.tar.gz"
+        sha256 "faecd90881e63dda5b10c3a8e170f4b1213268e000f27531580e7f29234a0e59"
 
         def install
           bin.install "humanitec-setup-wizard"
@@ -39,8 +39,8 @@ class HumanitecSetupWizard < Formula
     end
     on_arm do
       if Hardware::CPU.is_64_bit?
-        url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.6/setup-wizard_0.6_linux_arm64.tar.gz"
-        sha256 "2a3fe28f328f1d69ad9879b91d4a97939891b1fe87c739a2e3fa248c666fddc7"
+        url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.7/setup-wizard_0.7_linux_arm64.tar.gz"
+        sha256 "6ba5ebb49273f6d7749cce9cdcfcf44d734b16b2dea11434f45da4d12f67244a"
 
         def install
           bin.install "humanitec-setup-wizard"
