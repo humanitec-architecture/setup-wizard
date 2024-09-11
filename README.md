@@ -14,6 +14,20 @@
 
 ## Installation
 
+### Install with Homebrew (MacOS or Linux)
+
+1. Install the tap repository
+
+    ```bash
+    brew tap humanitec-architecture/setup-wizard https://github.com/humanitec-architecture/setup-wizard
+    ```
+
+2. Install the binary
+
+    ```bash
+    brew install humanitec-setup-wizard
+    ```
+
 ### Install from pre-built binaries
 
 1. View the latest Github Releases: https://github.com/humanitec-architecture/setup-wizard/releases.
@@ -157,6 +171,41 @@ During the execution of the CLI wizard, the following GCP / Kubernetes resources
 
 The CLI wizard outputs the name of every GCP resources generated and stores them in the state session.
 
+## Azure Provider Documentation
+
+### Authentication
+
+The CLI wizard requires a user to be authenticated to Azure. The common way is to use [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/authenticate-azure-cli) for this.
+
+### Minimum Required Azure Permissions
+
+The Service Principle running the wizard should have the following Azure/Entra ID Roles:
+
+- Azure User Access Administrator
+- Azure Kubernetes Service Cluster User
+- Entra ID Privileged Role Administrator 
+
+Also, there should be sufficient RBAC permissions in the AKS cluster to install Operator and Agent helm charts and create `ClusterRole` and `ClusterRoleBinding`.
+
+### Cluster and Project pre-requisites
+
+The CLI wizard assumes that:
+
+- In the target cluster an [Ingress Controller](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is available
+- [Azure Key Vault](https://learn.microsoft.com/en-us/azure/key-vault/general/) is created in the user's Subscription.
+
+### Resources Created
+
+- Managed Identity (default name `humanitec-account-identity`) and Federated Credentials to associate with Humanitec Cloud Account.
+- `Azure Kubernetes Service Cluster User Role` Assignment for this Managed Identity.
+- Entra ID security group (default name `humanitec-sec-group`) to set up workload identity in the AKS cluster. The managed identity is added as member of this group.
+- `Azure Kubernetes Service Cluster User Role` Assignment for this Entra ID Group.
+- `ClusterRole` and `ClusterRoleBinding` objects (default name `humanitec-deploy-access`) in the AKS cluster to set up RBAC and workload identity binding.
+- Humanitec Operator and Humanitec Agent are installed in the AKS cluster via Helm charts.
+- Managed Identity (default name `humanitec-operator-identity`) and Federated Credentials to use workload identity to access Azure Key Vault from Humanitec Operator.
+
+The CLI wizard outputs the name of every Azure resources generated and stores them in the state session.
+
 ## Contact
 
 For questions about this wizard, please reach out to our support team or via [GitHub Issues](https://github.com/humanitec-architecture/setup-wizard/issues).
@@ -169,6 +218,6 @@ Patches for issues listed here will be available soon. 🙂
 
 ## License & Copyright
 
-(c) 2024– Humanitec (PlatCo GmbH)
+&copy; 2024– Humanitec
 
 Source code for this project is released under the Microsoft Reference Source License (MS-RSL).
