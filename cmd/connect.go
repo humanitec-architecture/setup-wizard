@@ -8,6 +8,9 @@ import (
 	"path"
 
 	"github.com/humanitec/humanitec-go-autogen/client"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v2"
+
 	"github.com/humanitec/humctl-wizard/internal/cloud"
 	"github.com/humanitec/humctl-wizard/internal/cluster"
 	"github.com/humanitec/humctl-wizard/internal/keys"
@@ -15,8 +18,6 @@ import (
 	"github.com/humanitec/humctl-wizard/internal/platform"
 	"github.com/humanitec/humctl-wizard/internal/session"
 	"github.com/humanitec/humctl-wizard/internal/utils"
-	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v2"
 )
 
 var connectCmd = &cobra.Command{
@@ -97,12 +98,17 @@ var connectCmd = &cobra.Command{
 		} else {
 			message.Info("Humanitec Agent already installed")
 		}
+		if isAgentInstalled {
+			if err = addAgentToClusterDefinition(ctx, humanitecPlatform, humanitecClusterId); err != nil {
+				return fmt.Errorf("failed to update cluster resource definition with agent: %w", err)
+			}
+		}
 
-		isOperatorInstalled, err := provider.IsOperatorInstalled(ctx)
+		isSecretStoreRegistered, err := provider.IsSecretStoreRegistered(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to check if operator is already installed: %w", err)
 		}
-		if !isOperatorInstalled {
+		if !isSecretStoreRegistered {
 			internalSecrets, err := humanitecPlatform.CheckInternalSecrets(ctx)
 			if internalSecrets {
 				proceedWithOperator, err := message.BoolSelect(`Your organization has some definitions or shared values with secret inputs stored in the Internal Humanitec Secret Store. 
@@ -207,7 +213,7 @@ func deployTestApplication(ctx context.Context, humanitecPlatform *platform.Huma
 }
 
 func installOperator(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform, provider cloud.Provider, kubeconfig, clusterId string) error {
-	secretManager, err := selectSecretManager(provider)
+	secretManager, err := selectSecretManager(ctx, provider)
 	if err != nil {
 		return fmt.Errorf("failed to select secret manager: %w", err)
 	}
@@ -227,9 +233,13 @@ func installOperator(ctx context.Context, humanitecPlatform *platform.HumanitecP
 		}
 	}
 
-	_, err = cluster.InstallOperator(humanitecPlatform.OrganizationId, kubeconfig, operatorNamespace)
+	_, err = cluster.InstallUpgradeOperator(kubeconfig, operatorNamespace, nil)
 	if err != nil {
 		return fmt.Errorf("failed to install operator: %w", err)
+	}
+
+	if err = cluster.ConfigureDriverAuth(ctx, kubeconfig, operatorNamespace, humanitecPlatform); err != nil {
+		return fmt.Errorf("failed to configure operator to use drivers: %w", err)
 	}
 
 	var humanitecSecretStoreId string
@@ -285,13 +295,13 @@ func connectCluster(ctx context.Context, provider cloud.Provider, clusterId, loa
 	return humanitecClusterId, nil
 }
 
-func selectSecretManager(provider cloud.Provider) (string, error) {
+func selectSecretManager(ctx context.Context, provider cloud.Provider) (string, error) {
 	if session.State.Application.Connect.CloudSecretManagerId != "" {
 		message.Info("Using secret manager from previous session: %s", session.State.Application.Connect.CloudSecretManagerId)
 		return session.State.Application.Connect.CloudSecretManagerId, nil
 	}
 
-	secretManagers, err := provider.ListSecretManagers()
+	secretManagers, err := provider.ListSecretManagers(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to list secret managers: %w", err)
 	}
@@ -322,6 +332,7 @@ func selectSecretManager(provider cloud.Provider) (string, error) {
 }
 
 func installAgent(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform, humClusterId, kubeConfigPath string) error {
+	message.Info("Installing Humanitec Agent")
 	keyPair, err := keys.Generate()
 	if err != nil {
 		return fmt.Errorf("failed to generate key pair: %w", err)
@@ -365,6 +376,19 @@ func installAgent(ctx context.Context, humanitecPlatform *platform.HumanitecPlat
 		return fmt.Errorf("failed to install agent: %w", err)
 	}
 
+	message.Info("Agent installed successfully: %s", helmName)
+	return nil
+}
+
+func addAgentToClusterDefinition(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform, humClusterId string) error {
+	if r, err := humanitecPlatform.Client.GetResourceDefinitionWithResponse(ctx, humanitecPlatform.OrganizationId, humClusterId, &client.GetResourceDefinitionParams{}); err != nil {
+		return fmt.Errorf("failed to get cluster resource definition: %w", err)
+	} else if r.JSON200 == nil {
+		return fmt.Errorf("humanitec returned unexpected status code: %d with body %s", r.StatusCode(), string(r.Body))
+	} else if r.JSON200.DriverInputs != nil && r.JSON200.DriverInputs.SecretRefs != nil && (*r.JSON200.DriverInputs.SecretRefs)["agent_url"] != nil {
+		return nil
+	}
+
 	updateClusterResp, err := humanitecPlatform.Client.PatchResourceDefinitionWithResponse(ctx, humanitecPlatform.OrganizationId, humClusterId, client.PatchResourceDefinitionJSONRequestBody{
 		DriverInputs: &client.ValuesSecretsRefsRequest{
 			Secrets: &map[string]any{
@@ -378,8 +402,7 @@ func installAgent(ctx context.Context, humanitecPlatform *platform.HumanitecPlat
 	if updateClusterResp.StatusCode() != 200 {
 		return fmt.Errorf("humanitec returned unexpected status code: %d with body %s", updateClusterResp.StatusCode(), string(updateClusterResp.Body))
 	}
-
-	message.Info("Agent installed successfully: %s", helmName)
+	message.Info("Updated cluster resource definition with agent url")
 	return nil
 }
 
@@ -395,7 +418,19 @@ func getLoadBalancer(ctx context.Context, provider cloud.Provider, clusterId str
 	}
 	var loadBalancerId string
 	if len(loadBalancers) == 0 {
-		return "", fmt.Errorf("no load balancers found")
+		answer, err := message.BoolSelect("No load balancers found in the cluster. Do you want to manually specify one?")
+		if err != nil {
+			return "", fmt.Errorf("failed to select load balancer: %w", err)
+		} else if !answer {
+			return "", fmt.Errorf("no load balancers found")
+		}
+		prompt, err := message.Prompt("Please enter the load balancer ip:", "")
+		if err != nil {
+			return "", fmt.Errorf("failed to select value")
+		} else if !utils.IsIpLbAddress(prompt) {
+			return "", fmt.Errorf("please provide a valid IPv4 address")
+		}
+		loadBalancerId = prompt
 	} else if len(loadBalancers) == 1 {
 		answer, err := message.BoolSelect(fmt.Sprintf("Only one load balancer found: %s. Do you want to use it?", loadBalancers[0]))
 		if err != nil {
@@ -570,6 +605,7 @@ func selectCloudProvider(ctx context.Context, humanitecPlatform *platform.Humani
 	if err = provider.SetupProvider(ctx); err != nil {
 		return nil, fmt.Errorf("failed to set up cloud provider: %w", err)
 	}
+	message.Debug("Provider setup complete")
 	return provider, nil
 }
 
