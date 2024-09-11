@@ -30,7 +30,7 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 	}
 
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "context", agentNamespace), agentNamespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
+	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", agentNamespace), agentNamespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
 		message.Debug(format, args...)
 	}); err != nil {
 		return "", err
@@ -105,7 +105,7 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 
 func IsAgentInstalled(kubeConfigPath string) (bool, error) {
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "context", agentNamespace), agentNamespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
+	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", agentNamespace), agentNamespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
 		message.Debug(format, args...)
 	}); err != nil {
 		return false, fmt.Errorf("failed to initialize helm action configuration: %w", err)

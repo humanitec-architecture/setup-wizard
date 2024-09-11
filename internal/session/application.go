@@ -5,14 +5,17 @@ type ApplicationSession struct {
 }
 
 type ConnectSession struct {
-	HumanitecOrganizationId string `json:"humanitecOrganizationId"`
-	CloudProviderId         string `json:"cloudProviderId"`
-	HumanitecCloudAccountId string `json:"humanitecCloudAccountId"`
-	CloudClusterId          string `json:"cloudClusterId"`
-	CloudLoadBalancerId     string `json:"cloudLoadBalancerId"`
-	HumanitecClusterId      string `json:"humanitecClusterId"`
-	DoInstallAgent          *bool  `json:"doInstallAgent"`
-	OperatorNamespace       string `json:"operatorNamespace"`
-	CloudSecretManagerId    string `json:"cloudSecretManagerId"`
-	HumanitecSecretStoreId  string `json:"humanitecSecretStoreId"`
+	HumanitecOrganizationId string            `json:"humanitecOrganizationId"`
+	CloudProviderId         string            `json:"cloudProviderId"`
+	HumanitecCloudAccountId string            `json:"humanitecCloudAccountId"`
+	CloudClusterId          string            `json:"cloudClusterId"`
+	CloudLoadBalancerId     string            `json:"cloudLoadBalancerId"`
+	HumanitecClusterId      string            `json:"humanitecClusterId"`
+	DoInstallAgent          *bool             `json:"doInstallAgent"`
+	DoInstallOperator       *bool             `json:"doInstallOperator"`
+	OperatorNamespace       string            `json:"operatorNamespace"`
+	CloudSecretManagerId    string            `json:"cloudSecretManagerId"`
+	HumanitecSecretStoreId  string            `json:"humanitecSecretStoreId"`
+	LoadBalancers           map[string]string `json:"loadBalancers"`
+	DriverAuthConfigured    bool              `json:"driverAuthConfigured"`
 }

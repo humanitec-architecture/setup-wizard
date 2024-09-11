@@ -2,17 +2,21 @@ package cloud
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/humanitec/humanitec-go-autogen"
 	"github.com/humanitec/humanitec-go-autogen/client"
 	"github.com/humanitec/humctl-wizard/internal/message"
+	"github.com/humanitec/humctl-wizard/internal/session"
 	"github.com/humanitec/humctl-wizard/internal/utils"
 	k8s_rbac "k8s.io/api/rbac/v1"
 	k8s_apierrors "k8s.io/apimachinery/pkg/api/errors"
 	k8s_meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8s_rbac_ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -163,4 +167,78 @@ func ensureSecretStore(ctx context.Context, humClient *humanitec.Client, orgId, 
 	} else {
 		return false, fmt.Errorf("failed to create Secret Store '%s' in Humanitec: unexpected status code %d instead of %d", secretStoreId, resp.StatusCode(), http.StatusCreated)
 	}
+}
+
+func listLoadBalancers(ctx context.Context, clientset *kubernetes.Clientset) ([]string, error) {
+	session.State.Application.Connect.LoadBalancers = make(map[string]string)
+	list, err := clientset.CoreV1().Services("").List(ctx, k8s_meta.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list load balancers: %w", err)
+	}
+	outputs := make([]string, 0)
+	for _, service := range list.Items {
+		if service.Spec.Type == "LoadBalancer" {
+			if len(service.Status.LoadBalancer.Ingress) > 0 {
+				if service.Status.LoadBalancer.Ingress[0].IP != "" {
+					session.State.Application.Connect.LoadBalancers[service.Name+"."+service.Namespace] = service.Status.LoadBalancer.Ingress[0].IP
+				} else if service.Status.LoadBalancer.Ingress[0].Hostname != "" {
+					session.State.Application.Connect.LoadBalancers[service.Name+"."+service.Namespace] = service.Status.LoadBalancer.Ingress[0].Hostname
+				}
+			}
+			outputs = append(outputs, service.Name+"."+service.Namespace)
+		}
+	}
+	return outputs, nil
+}
+
+func createClusterRoleAndBinding(ctx context.Context, clientset *kubernetes.Clientset, rbacSubject k8s_rbac.Subject, k8sSession *session.K8s) error {
+	if k8sSession == nil {
+		return errors.New("k8s session is nil")
+	}
+	var clusterRoleName string
+	if savedClusterRole := k8sSession.ClusterRoleName; savedClusterRole != "" {
+		clusterRoleName = savedClusterRole
+	} else {
+		clusterRoleName = K8sClusterRoleBaseName
+	}
+
+	if alreadyExists, err := ensurek8sClusterRole(ctx, clientset, clusterRoleName); err != nil {
+		return fmt.Errorf("failed to ensure Cluster Role '%s' exists: %w", clusterRoleName, err)
+	} else if alreadyExists {
+		message.Info("Kubernetes Cluster Role '%s' already exists", clusterRoleName)
+	} else {
+		message.Info("Kubernetes Cluster Role '%s' created", clusterRoleName)
+		if err = session.Save(); err != nil {
+			return fmt.Errorf("failed to save state: %w", err)
+		}
+	}
+	k8sSession.ClusterRoleName = clusterRoleName
+
+	clusterRoleBindingName := K8sClusterRoleBindingBaseName
+	if savedClusterRoleBindingName := k8sSession.ClusterRoleBindingName; savedClusterRoleBindingName != "" {
+		clusterRoleBindingName = savedClusterRoleBindingName
+	}
+
+	clusterRoleBinding := k8s_rbac_ac.ClusterRoleBinding(clusterRoleBindingName).
+		WithSubjects(&k8s_rbac_ac.SubjectApplyConfiguration{
+			Kind:      &rbacSubject.Kind,
+			APIGroup:  &rbacSubject.APIGroup,
+			Name:      &rbacSubject.Name,
+			Namespace: &rbacSubject.Namespace,
+		}).
+		WithRoleRef(&k8s_rbac_ac.RoleRefApplyConfiguration{
+			APIGroup: to.Ptr("rbac.authorization.k8s.io"),
+			Kind:     to.Ptr("ClusterRole"),
+			Name:     &k8sSession.ClusterRoleName,
+		})
+
+	if _, err := clientset.RbacV1().ClusterRoleBindings().Apply(ctx, clusterRoleBinding, k8s_meta.ApplyOptions{
+		FieldManager: "humctl-wizard",
+	}); err != nil {
+		return fmt.Errorf("failed to create Kubernetes Custom Role Binding '%s': %w", clusterRoleBindingName, err)
+	}
+	message.Info("Kubernetes Cluster Role Binding '%s' created", clusterRoleBindingName)
+	k8sSession.ClusterRoleBindingName = clusterRoleBindingName
+
+	return nil
 }

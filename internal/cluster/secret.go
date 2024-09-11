@@ -37,7 +37,9 @@ func ApplySecret(ctx context.Context, kubeConfigPath, namespace, secretName stri
 		},
 		StringData: secretData,
 		Type:       &secretType,
-	}, metav1.ApplyOptions{})
+	}, metav1.ApplyOptions{
+		FieldManager: "humctl-wizard",
+	})
 
 	if err != nil {
 		return fmt.Errorf("failed to create secret: %w", err)

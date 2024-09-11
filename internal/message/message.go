@@ -89,6 +89,10 @@ func Debug(format string, args ...any) {
 	message.Debugln(emoji.HammerAndWrench, fmt.Sprintf(format, args...))
 }
 
+func Warning(format string, args ...any) {
+	message.Warningln(emoji.Warning, fmt.Sprintf(format, args...))
+}
+
 func Info(format string, args ...any) {
 	message.Infoln(emoji.Information, fmt.Sprintf(format, args...))
 }

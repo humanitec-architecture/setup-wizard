@@ -3,20 +3,21 @@ package cloud
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"math/rand"
+	"net/http"
 	"os"
 	"path"
 	"slices"
 	"time"
 
-	"fmt"
-	"math/rand"
-	"net/http"
-
 	"github.com/humanitec/humanitec-go-autogen/client"
+
 	"github.com/humanitec/humctl-wizard/internal/cluster"
 	"github.com/humanitec/humctl-wizard/internal/message"
 	"github.com/humanitec/humctl-wizard/internal/platform"
 	"github.com/humanitec/humctl-wizard/internal/session"
+	"github.com/humanitec/humctl-wizard/internal/utils"
 
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/cloudresourcemanager/v1"
@@ -568,7 +569,13 @@ func (p *gcpProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 		message.Info("Cluster Resource Definition '%s' exists", clusterId)
 	} else if resp.StatusCode() == http.StatusNotFound {
 		clusterInfo := session.State.GCPProvider.GKEClusters.ClustersMap[clusterId]
-		loadBalancerInfo := session.State.GCPProvider.GKEClusters.LoadBalancersMap[loadBalancerName]
+
+		var lbIp string
+		if utils.IsIpLbAddress(loadBalancerName) {
+			lbIp = loadBalancerName
+		} else {
+			lbIp = session.State.GCPProvider.GKEClusters.LoadBalancersMap[loadBalancerName].Ip
+		}
 
 		resp, err := p.humanitecPlatform.Client.CreateResourceDefinitionWithResponse(
 			ctx, p.humanitecPlatform.OrganizationId, client.CreateResourceDefinitionRequestRequest{
@@ -581,7 +588,7 @@ func (p *gcpProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 					Values: &map[string]interface{}{
 						"project_id":   session.State.GCPProvider.GPCProject.ProjectID,
 						"name":         clusterId,
-						"loadbalancer": loadBalancerInfo.Ip,
+						"loadbalancer": lbIp,
 						"zone":         clusterInfo.Location,
 					},
 				},
@@ -602,7 +609,8 @@ func (p *gcpProvider) IsClusterPubliclyAvailable(ctx context.Context, clusterId 
 	if err := p.ensureClusterInfo(ctx); err != nil {
 		return false, fmt.Errorf("failed to retrieve cluster '%s' info", clusterId)
 	}
-	if p.clusterInfo.PrivateClusterConfig != nil && p.clusterInfo.PrivateClusterConfig.EnablePrivateNodes {
+	if p.clusterInfo.PrivateClusterConfig != nil && p.clusterInfo.PrivateClusterConfig.EnablePrivateEndpoint {
+		message.Info("Assuming cluster is private due to enable_private_endpoint setting")
 		return false, nil
 	}
 	return true, nil
@@ -637,11 +645,11 @@ func (p *gcpProvider) WriteKubeConfig(ctx context.Context, clusterId string) (st
 	return pathToKubeConfig, nil
 }
 
-func (p *gcpProvider) ListSecretManagers() ([]string, error) {
+func (p *gcpProvider) ListSecretManagers(ctx context.Context) ([]string, error) {
 	return []string{"gcp-secret-manager"}, nil
 }
 
-func (p *gcpProvider) IsOperatorInstalled(ctx context.Context) (bool, error) {
+func (p *gcpProvider) IsSecretStoreRegistered(ctx context.Context) (bool, error) {
 	if session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId != "" {
 		if isSecretStoreCreated, err := findExternalPrimarySecretStore(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId); err != nil {
 			return false, fmt.Errorf("failed to check if secret store exists, %w", err)

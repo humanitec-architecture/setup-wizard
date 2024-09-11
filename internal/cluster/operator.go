@@ -1,13 +1,19 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/humanitec/humctl-wizard/internal/keys"
+	"net/http"
 	"os"
 	"path"
 	"time"
 
 	"github.com/humanitec/humctl-wizard/internal/message"
+	"github.com/humanitec/humctl-wizard/internal/platform"
+	"github.com/humanitec/humctl-wizard/internal/session"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
@@ -28,7 +34,7 @@ const (
 	operatorReleaseName = "humanitec-operator"
 )
 
-func InstallOperator(humanitecOrg, kubeConfigPath, namespace string) (string, error) {
+func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]interface{}) (string, error) {
 	settings := cli.New()
 
 	registryClient, err := registry.NewClient()
@@ -37,7 +43,7 @@ func InstallOperator(humanitecOrg, kubeConfigPath, namespace string) (string, er
 	}
 
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "context", namespace), namespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
+	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", namespace), namespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
 		message.Debug(format, args...)
 	}); err != nil {
 		return "", err
@@ -72,6 +78,9 @@ func InstallOperator(humanitecOrg, kubeConfigPath, namespace string) (string, er
 		return "", fmt.Errorf("failed to check if operator is installed: %w", err)
 	}
 
+	if values == nil {
+		values = map[string]interface{}{}
+	}
 	if !ifInstalled {
 		client := action.NewInstall(actionConfig)
 		client.Wait = true
@@ -80,7 +89,7 @@ func InstallOperator(humanitecOrg, kubeConfigPath, namespace string) (string, er
 		client.Namespace = namespace
 		client.Timeout = 5 * time.Minute
 
-		release, err = client.Run(chart, map[string]interface{}{})
+		release, err = client.Run(chart, values)
 		if err != nil {
 			return "", fmt.Errorf("failed to install operator: %w", err)
 		}
@@ -91,7 +100,7 @@ func InstallOperator(humanitecOrg, kubeConfigPath, namespace string) (string, er
 		client.Namespace = namespace
 		client.Timeout = 5 * time.Minute
 
-		release, err = client.Run(operatorReleaseName, chart, map[string]interface{}{})
+		release, err = client.Run(operatorReleaseName, chart, values)
 		if err != nil {
 			return "", fmt.Errorf("failed to upgrade operator: %w", err)
 		}
@@ -102,7 +111,7 @@ func InstallOperator(humanitecOrg, kubeConfigPath, namespace string) (string, er
 
 func isOperatorInstalled(kubeConfigPath, namespace string) (bool, error) {
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "context", namespace), namespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
+	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", namespace), namespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
 		message.Debug(format, args...)
 	}); err != nil {
 		return false, fmt.Errorf("failed to initialize helm action configuration: %w", err)
@@ -165,5 +174,67 @@ func ApplySecretStore(ctx context.Context, kubeconfig, namespace, secretsStoreId
 	if err != nil {
 		return fmt.Errorf("failed to an object: %w", err)
 	}
+	return nil
+}
+
+func ConfigureDriverAuth(ctx context.Context, kubeconfig, namespace string, platform *platform.HumanitecPlatform) error {
+	if session.State.Application.Connect.DriverAuthConfigured {
+		useExisting, err := message.BoolSelect("The operator already configured to authenticate Humanitec drivers. Would you like to use the existing configuration?")
+		if err != nil {
+			return fmt.Errorf("failed to select an option: %w", err)
+		}
+		if useExisting {
+			return nil
+		}
+	} else {
+		proceed, err := message.BoolSelect("Would you like to configure the operator to authenticate Humanitec drivers?")
+		if err != nil {
+			return fmt.Errorf("failed to select an option: %w", err)
+		}
+		if !proceed {
+			return nil
+		}
+	}
+
+	// Generate private/public key pair
+	keyPair, err := keys.Generate()
+	if err != nil {
+		return fmt.Errorf("failed to generate RSA key: %w", err)
+	}
+	keyPEM := keyPair.Private
+	pubPEM := keyPair.Public
+
+	// Create K8s Secret containing the private key
+	data := map[string]string{
+		"privateKey":              string(keyPEM),
+		"humanitecOrganisationID": session.State.Application.Connect.HumanitecOrganizationId,
+	}
+	if err = ApplySecret(ctx, kubeconfig, namespace, "humanitec-operator-private-key", data); err != nil {
+		return fmt.Errorf("failed to create private key secret: %w", err)
+	}
+	message.Info("K8s Secret containing private key created")
+
+	// Register public key in the orchestrator
+	body, err := json.Marshal(string(pubPEM))
+	if err != nil {
+		return fmt.Errorf("failed to selialize public key: %w", err)
+	}
+	resp, err := platform.Client.CreatePublicKeyWithBodyWithResponse(ctx, platform.OrganizationId, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to register public key: %w", err)
+	}
+	if resp.JSON400 != nil {
+		return fmt.Errorf("failed to register public key, status code: %s, message: %s", resp.Status(), resp.JSON400.Message)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("failed to register public key, status code: %s", resp.Status())
+	}
+	message.Info("Public key registered in Humanitec")
+
+	session.State.Application.Connect.DriverAuthConfigured = true
+	if err := session.Save(); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
+
 	return nil
 }

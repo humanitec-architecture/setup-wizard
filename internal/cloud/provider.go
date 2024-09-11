@@ -15,7 +15,7 @@ type Provider interface {
 	ConnectCluster(ctx context.Context, clusterId, loadBalancerName, humanitecCloudAccountId, humanitecClusterId, humanitecClusterName string) (string, error)
 	IsClusterPubliclyAvailable(ctx context.Context, clusterId string) (bool, error)
 	WriteKubeConfig(ctx context.Context, clusterId string) (string, error)
-	ListSecretManagers() ([]string, error)
+	ListSecretManagers(ctx context.Context) ([]string, error)
 	ConfigureOperator(ctx context.Context, platform *platform.HumanitecPlatform, kubeconfig, operatorNamespace, clusterId, secretManager, humanitecSecretStoreId string) error
-	IsOperatorInstalled(ctx context.Context) (bool, error)
+	IsSecretStoreRegistered(ctx context.Context) (bool, error)
 }

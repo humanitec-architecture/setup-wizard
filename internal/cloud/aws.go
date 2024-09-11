@@ -16,18 +16,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/logging"
 	"github.com/google/uuid"
 	"github.com/humanitec/humanitec-go-autogen/client"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
+
 	"github.com/humanitec/humctl-wizard/internal/cluster"
 	"github.com/humanitec/humctl-wizard/internal/message"
 	"github.com/humanitec/humctl-wizard/internal/platform"
 	"github.com/humanitec/humctl-wizard/internal/session"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/clientcmd/api"
+	"github.com/humanitec/humctl-wizard/internal/utils"
 
 	"sigs.k8s.io/aws-iam-authenticator/pkg/token"
 )
@@ -39,10 +43,24 @@ type awsProvider struct {
 
 var humanitecOperatorServiceAccount = "humanitec-operator-controller-manager"
 
+type awsLogger struct{}
+
+func (a awsLogger) Logf(classification logging.Classification, format string, v ...interface{}) {
+	if classification == logging.Debug {
+		message.Debug("AWS SDK: "+format, v...)
+	} else {
+		message.Warning("AWS SDK: "+format, v...)
+	}
+}
+
 func newAwsProvider(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform) (Provider, error) {
-	config, err := config.LoadDefaultConfig(ctx, config.WithRetryer(func() aws.Retryer {
-		return retry.AddWithMaxAttempts(retry.NewStandard(), 5)
-	}))
+	var logger awsLogger
+	config, err := config.LoadDefaultConfig(ctx,
+		config.WithLogConfigurationWarnings(true),
+		config.WithLogger(logger),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.AddWithMaxAttempts(retry.NewStandard(), 5)
+		}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load aws default configuration, %w", err)
 	}
@@ -191,20 +209,43 @@ func (a *awsProvider) ListLoadBalancers(ctx context.Context, clusterId string) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe cluster, %w", err)
 	}
-	if clusterResp == nil || clusterResp.Cluster == nil || clusterResp.Cluster.Arn == nil || clusterResp.Cluster.Name == nil {
-		return nil, fmt.Errorf("failed to describe cluster: clusterResp, clusterResp.Cluster, clusterResp.Cluster.Arn or clusterResp.Cluster.Name is nil")
+	if clusterResp == nil || clusterResp.Cluster == nil || clusterResp.Cluster.Arn == nil || clusterResp.Cluster.Name == nil || clusterResp.Cluster.ResourcesVpcConfig == nil || clusterResp.Cluster.ResourcesVpcConfig.VpcId == nil {
+		return nil, fmt.Errorf("failed to describe cluster: clusterResp, clusterResp.Cluster, clusterResp.Cluster.Arn, clusterResp.Cluster.Name, clusterResp.Cluster.ResourcesVpcConfig or clusterResp.Cluster.ResourcesVpcConfig.VpcId is nil")
 	}
 
-	elbClient := elasticloadbalancing.NewFromConfig(a.awsConfig)
-
 	loadBalancerNames := []string{}
+
+	elbClient := elasticloadbalancing.NewFromConfig(a.awsConfig)
 	loadBalancersResp, err := elbClient.DescribeLoadBalancers(ctx, &elasticloadbalancing.DescribeLoadBalancersInput{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe load balancers, %w", err)
 	}
+	if loadBalancersResp == nil || loadBalancersResp.LoadBalancerDescriptions == nil {
+		return nil, fmt.Errorf("failed to describe load balancers: loadBalancersResp or loadBalancersResp.LoadBalancerDescriptions is nil")
+	}
 	for _, loadBalancerDesc := range loadBalancersResp.LoadBalancerDescriptions {
+		if loadBalancerDesc.VPCId == nil || loadBalancerDesc.LoadBalancerName == nil {
+			return nil, fmt.Errorf("failed to describe load balancer: loadBalancerDesc.VPCId or loadBalancerDesc.LoadBalancerName is nil")
+		}
 		if *loadBalancerDesc.VPCId == *clusterResp.Cluster.ResourcesVpcConfig.VpcId {
 			loadBalancerNames = append(loadBalancerNames, *loadBalancerDesc.LoadBalancerName)
+		}
+	}
+
+	elbV2Client := elasticloadbalancingv2.NewFromConfig(a.awsConfig)
+	loadBalancersV2Resp, err := elbV2Client.DescribeLoadBalancers(ctx, &elasticloadbalancingv2.DescribeLoadBalancersInput{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe load balancers, %w", err)
+	}
+	if loadBalancersV2Resp == nil || loadBalancersV2Resp.LoadBalancers == nil {
+		return nil, fmt.Errorf("failed to describe load balancers: loadBalancersV2Resp or loadBalancersV2Resp.LoadBalancers is nil")
+	}
+	for _, loadBalancer := range loadBalancersV2Resp.LoadBalancers {
+		if loadBalancer.VpcId == nil || loadBalancer.LoadBalancerName == nil {
+			return nil, fmt.Errorf("failed to describe load balancer: loadBalancer.VpcId or loadBalancer.LoadBalancerName is nil")
+		}
+		if *loadBalancer.VpcId == *clusterResp.Cluster.ResourcesVpcConfig.VpcId {
+			loadBalancerNames = append(loadBalancerNames, *loadBalancer.LoadBalancerName)
 		}
 	}
 	return loadBalancerNames, nil
@@ -218,11 +259,15 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 	if err != nil {
 		return "", fmt.Errorf("failed to describe cluster, %w", err)
 	}
-	if clusterResp == nil || clusterResp.Cluster == nil || clusterResp.Cluster.Arn == nil || clusterResp.Cluster.Name == nil {
-		return "", fmt.Errorf("failed to describe cluster: clusterResp, clusterResp.Cluster, clusterResp.Cluster.Arn or clusterResp.Cluster.Name is nil")
+	if clusterResp == nil || clusterResp.Cluster == nil || clusterResp.Cluster.Arn == nil || clusterResp.Cluster.Name == nil || clusterResp.Cluster.AccessConfig == nil {
+		return "", fmt.Errorf("failed to describe cluster: clusterResp, clusterResp.Cluster, clusterResp.Cluster.Arn, clusterResp.Cluster.Name or clusterResp.Cluster.AccessConfig is nil")
 	}
 
 	iamClient := iam.NewFromConfig(a.awsConfig)
+
+	if clusterResp.Cluster.AccessConfig.AuthenticationMode == types.AuthenticationModeConfigMap {
+		return "", errors.New("cluster needs to support IAM authentication, please change the cluster authentication mode or use a different cluster")
+	}
 
 	if session.State.AwsProvider.ConnectCluster.PolicyArn != "" {
 		isPolicyExists, err := a.isPolicyExists(ctx, session.State.AwsProvider.ConnectCluster.PolicyArn)
@@ -334,20 +379,62 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 		message.Info("AWS Access Policy to cluster %s for role %s as cluster admin already associated", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleName)
 	}
 
-	elbClient := elasticloadbalancing.NewFromConfig(a.awsConfig)
-	loadBalancersDesc, err := elbClient.DescribeLoadBalancers(ctx, &elasticloadbalancing.DescribeLoadBalancersInput{
-		LoadBalancerNames: []string{loadBalancerName},
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to describe load balancers, %w", err)
+	clusterValues := map[string]interface{}{
+		"region": a.awsConfig.Region,
+		"name":   *clusterResp.Cluster.Name,
 	}
-	if loadBalancersDesc == nil || loadBalancersDesc.LoadBalancerDescriptions == nil {
-		return "", fmt.Errorf("failed to describe load balancers: loadBalancersDesc or loadBalancersDesc.LoadBalancerDescriptions is nil")
+
+	if utils.IsIpLbAddress(loadBalancerName) {
+		clusterValues["loadbalancer"] = loadBalancerName
+	} else {
+		var loadbalancerDNSName, loadBalancerCanonicalHostedZoneId string
+		elbClient := elasticloadbalancing.NewFromConfig(a.awsConfig)
+		loadBalancersResp, err := elbClient.DescribeLoadBalancers(ctx, &elasticloadbalancing.DescribeLoadBalancersInput{})
+		if err != nil {
+			return "", fmt.Errorf("failed to describe load balancers, %w", err)
+		}
+		if loadBalancersResp == nil || loadBalancersResp.LoadBalancerDescriptions == nil {
+			return "", fmt.Errorf("failed to describe load balancers: loadBalancersResp or loadBalancersResp.LoadBalancerDescriptions is nil")
+		}
+		for _, loadBalancerDesc := range loadBalancersResp.LoadBalancerDescriptions {
+			if loadBalancerDesc.LoadBalancerName == nil {
+				return "", fmt.Errorf("failed to describe load balancer: loadBalancerDesc.LoadBalancerName is nil")
+			}
+			if *loadBalancerDesc.LoadBalancerName == loadBalancerName {
+				if loadBalancerDesc.DNSName == nil || loadBalancerDesc.CanonicalHostedZoneNameID == nil {
+					return "", fmt.Errorf("failed to describe load balancer: loadBalancerDesc.DNSName or loadBalancerDesc.CanonicalHostedZoneNameID is nil")
+				}
+				loadbalancerDNSName = *loadBalancerDesc.DNSName
+				loadBalancerCanonicalHostedZoneId = *loadBalancerDesc.CanonicalHostedZoneNameID
+			}
+		}
+
+		elbV2Client := elasticloadbalancingv2.NewFromConfig(a.awsConfig)
+		loadBalancersV2Resp, err := elbV2Client.DescribeLoadBalancers(ctx, &elasticloadbalancingv2.DescribeLoadBalancersInput{})
+		if err != nil {
+			return "", fmt.Errorf("failed to describe load balancers, %w", err)
+		}
+		if loadBalancersV2Resp == nil || loadBalancersV2Resp.LoadBalancers == nil {
+			return "", fmt.Errorf("failed to describe load balancers: loadBalancersV2Resp or loadBalancersV2Resp.LoadBalancers is nil")
+		}
+		for _, loadBalancer := range loadBalancersV2Resp.LoadBalancers {
+			if loadBalancer.LoadBalancerName == nil {
+				return "", fmt.Errorf("failed to describe load balancer: loadBalancer.LoadBalancerName is nil")
+			}
+			if *loadBalancer.LoadBalancerName == loadBalancerName {
+				if loadBalancer.DNSName == nil || loadBalancer.CanonicalHostedZoneId == nil {
+					return "", fmt.Errorf("failed to describe load balancer: loadBalancer.DNSName or loadBalancer.CanonicalHostedZoneId is nil")
+				}
+				loadbalancerDNSName = *loadBalancer.DNSName
+				loadBalancerCanonicalHostedZoneId = *loadBalancer.CanonicalHostedZoneId
+			}
+		}
+		if loadbalancerDNSName == "" || loadBalancerCanonicalHostedZoneId == "" {
+			return "", fmt.Errorf("failed to describe load balancer: loadbalancerDNSName or loadBalancerCanonicalHostedZoneId is empty")
+		}
+		clusterValues["loadbalancer"] = loadbalancerDNSName
+		clusterValues["loadbalancer_hosted_zone"] = loadBalancerCanonicalHostedZoneId
 	}
-	if len(loadBalancersDesc.LoadBalancerDescriptions) != 1 {
-		return "", fmt.Errorf("failed to describe load balancers: expected 1 load balancer, got %d", len(loadBalancersDesc.LoadBalancerDescriptions))
-	}
-	loadBalancer := loadBalancersDesc.LoadBalancerDescriptions[0]
 
 	isHumanitecClusterResourceCreated, err := a.isHumanitecResourceExists(ctx, humanitecClusterId)
 	if err != nil {
@@ -362,12 +449,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 			DriverAccount: &humanitecCloudAccountId,
 			DriverType:    "humanitec/k8s-cluster-eks",
 			DriverInputs: &client.ValuesSecretsRefsRequest{
-				Values: &map[string]interface{}{
-					"region":                   a.awsConfig.Region,
-					"name":                     *clusterResp.Cluster.Name,
-					"loadbalancer":             *loadBalancer.DNSName,
-					"loadbalancer_hosted_zone": *loadBalancer.CanonicalHostedZoneNameID,
-				},
+				Values: &clusterValues,
 			},
 		})
 		if err != nil {
@@ -442,7 +524,7 @@ func (a *awsProvider) WriteKubeConfig(ctx context.Context, clusterId string) (st
 	return pathToKubeConfig, nil
 }
 
-func (a *awsProvider) ListSecretManagers() ([]string, error) {
+func (a *awsProvider) ListSecretManagers(ctx context.Context) ([]string, error) {
 	return []string{"aws-secret-manager"}, nil
 }
 
@@ -683,7 +765,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	return nil
 }
 
-func (a *awsProvider) IsOperatorInstalled(ctx context.Context) (bool, error) {
+func (a *awsProvider) IsSecretStoreRegistered(ctx context.Context) (bool, error) {
 	if session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId != "" {
 		isSecretStoreCreated, err := a.isHumanitecSecretStoreResourceCreated(ctx, session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId)
 		if err != nil {
