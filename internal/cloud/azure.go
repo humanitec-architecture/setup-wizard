@@ -346,13 +346,12 @@ func (p *azureProvider) ConnectCluster(ctx context.Context, clusterId, loadBalan
 		return "", fmt.Errorf("failed to create Azure authorization client, %w", err)
 	}
 	azClient := clientFactory.NewRoleAssignmentsClient()
-	scope := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", session.State.AzureProvider.SubscriptionID, session.State.AzureProvider.ResourceGroup)
 
 	roleID := "4abbcc35-e782-43d8-92c5-2d3f1bd2253f" // Built-in "Azure Kubernetes Service Cluster User Role" role
 	aksClusterUserRoleID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
 		session.State.AzureProvider.SubscriptionID, roleID)
 
-	err = p.createRoleAssignmentWithRetries(ctx, azClient, scope, armauthorization.RoleAssignmentProperties{
+	err = p.createRoleAssignmentWithRetries(ctx, azClient, clusterId, armauthorization.RoleAssignmentProperties{
 		PrincipalID:      to.Ptr(session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityPrincipalId),
 		RoleDefinitionID: to.Ptr(aksClusterUserRoleID),
 		PrincipalType:    to.Ptr(armauthorization.PrincipalTypeServicePrincipal),
@@ -425,7 +424,7 @@ func (p *azureProvider) ConnectCluster(ctx context.Context, clusterId, loadBalan
 	}
 
 	// Create AKS CLuster User Role Assignment for the group
-	err = p.createRoleAssignmentWithRetries(ctx, azClient, scope, armauthorization.RoleAssignmentProperties{
+	err = p.createRoleAssignmentWithRetries(ctx, azClient, clusterId, armauthorization.RoleAssignmentProperties{
 		PrincipalID:      to.Ptr(session.State.AzureProvider.ConnectCluster.EntraIDGroupId),
 		RoleDefinitionID: to.Ptr(aksClusterUserRoleID),
 		PrincipalType:    to.Ptr(armauthorization.PrincipalTypeGroup),
@@ -922,6 +921,16 @@ func (p *azureProvider) isMicrosoftEntraIDEnabled(ctx context.Context, cluster a
 }
 
 func (p *azureProvider) enableIdentityInCluster(ctx context.Context, opCluster armcontainerservice.ManagedCluster, resourceGroup, namespace, sa string) error {
+	if opCluster.Properties.SecurityProfile.WorkloadIdentity == nil {
+		return fmt.Errorf("cluster must have workload identity enabled")
+	}
+	if opCluster.Properties.EnableRBAC == nil {
+		return fmt.Errorf("cluster must have Azure RBAC enabled")
+	}
+	if opCluster.Properties.OidcIssuerProfile.IssuerURL == nil {
+		return fmt.Errorf("cluster must have OpenID issuer enabled to setup workload identity")
+	}
+
 	managedIdentityName := "humanitec-operator-identity"
 	federatedCredentialsName := "humanitec-operator-identity"
 
@@ -996,9 +1005,6 @@ func (p *azureProvider) enableIdentityInCluster(ctx context.Context, opCluster a
 		}
 	}
 	if session.State.AzureProvider.ConfigureOperatorAccess.FederatedCredentialsName == "" {
-		if opCluster.Properties.OidcIssuerProfile.IssuerURL == nil {
-			return fmt.Errorf("cluster must have OpenID issuer enabled to setup workload identity")
-		}
 		serviceAccount := fmt.Sprintf("system:serviceaccount:%s:%s", namespace, sa)
 		resp, err := fedClient.CreateOrUpdate(ctx,
 			resourceGroup,

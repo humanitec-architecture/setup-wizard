@@ -365,6 +365,10 @@ func (p *gcpProvider) ListClusters(ctx context.Context) ([]string, error) {
 		clusters[cluster.Name] = session.ClustersInfo{
 			ID:       cluster.Id,
 			Location: cluster.Location,
+			// When private config is not nil, then private endpoint is available
+			PrivateEnabled: cluster.PrivateClusterConfig != nil,
+			// When enable-private-endpoint is true, the public endpoint is disabled.
+			PrivateOnly: cluster.PrivateClusterConfig != nil && cluster.PrivateClusterConfig.EnablePrivateEndpoint,
 		}
 		output = append(output, cluster.Name)
 	}
@@ -577,6 +581,26 @@ func (p *gcpProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 			lbIp = session.State.GCPProvider.GKEClusters.LoadBalancersMap[loadBalancerName].Ip
 		}
 
+		definitionValues := map[string]interface{}{
+			"project_id":   session.State.GCPProvider.GPCProject.ProjectID,
+			"name":         clusterId,
+			"loadbalancer": lbIp,
+			"zone":         clusterInfo.Location,
+		}
+
+		if clusterInfo.PrivateOnly {
+			definitionValues["internal_ip"] = true
+		} else if clusterInfo.PrivateEnabled {
+			if b, err := message.BoolSelect("Cluster has the private endpoint enabled, do you wish to use it?"); err != nil {
+				return "", fmt.Errorf("failed to prompt user: %w", err)
+			} else if b {
+				definitionValues["internal_ip"] = true
+				// Override and set the cluster to private for the rest of the session
+				clusterInfo.PrivateOnly = true
+				session.State.GCPProvider.GKEClusters.ClustersMap[clusterId] = clusterInfo
+			}
+		}
+
 		resp, err := p.humanitecPlatform.Client.CreateResourceDefinitionWithResponse(
 			ctx, p.humanitecPlatform.OrganizationId, client.CreateResourceDefinitionRequestRequest{
 				Id:            humanitecClusterId,
@@ -585,12 +609,7 @@ func (p *gcpProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 				DriverAccount: &humanitecCloudAccountId,
 				DriverType:    "humanitec/k8s-cluster-gke",
 				DriverInputs: &client.ValuesSecretsRefsRequest{
-					Values: &map[string]interface{}{
-						"project_id":   session.State.GCPProvider.GPCProject.ProjectID,
-						"name":         clusterId,
-						"loadbalancer": lbIp,
-						"zone":         clusterInfo.Location,
-					},
+					Values: &definitionValues,
 				},
 			})
 		if err != nil {
@@ -606,11 +625,7 @@ func (p *gcpProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 }
 
 func (p *gcpProvider) IsClusterPubliclyAvailable(ctx context.Context, clusterId string) (bool, error) {
-	if err := p.ensureClusterInfo(ctx); err != nil {
-		return false, fmt.Errorf("failed to retrieve cluster '%s' info", clusterId)
-	}
-	if p.clusterInfo.PrivateClusterConfig != nil && p.clusterInfo.PrivateClusterConfig.EnablePrivateEndpoint {
-		message.Info("Assuming cluster is private due to enable_private_endpoint setting")
+	if session.State.GCPProvider.GKEClusters.ClustersMap[clusterId].PrivateOnly {
 		return false, nil
 	}
 	return true, nil

@@ -28,8 +28,10 @@ type GCPProviderSession struct {
 }
 
 type ClustersInfo struct {
-	ID       string `json:"id"`
-	Location string `json:"location"`
+	ID             string `json:"id"`
+	Location       string `json:"location"`
+	PrivateEnabled bool   `json:"private_enabled"`
+	PrivateOnly    bool   `json:"private_only"`
 }
 
 type LoadBalancerInfo struct {

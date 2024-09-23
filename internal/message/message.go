@@ -2,6 +2,7 @@ package message
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/aripalo/go-delightful"
@@ -28,6 +29,7 @@ func SetColorMode(flag bool) {
 
 func Select(message string, options []string) (string, error) {
 	var answer string
+	slices.Sort(options)
 	prompt := survey.Select{
 		Message: message,
 		Options: options,
@@ -43,6 +45,7 @@ func Select(message string, options []string) (string, error) {
 
 func MultipleSelect(message string, options []string) ([]string, error) {
 	var answers []string
+	slices.Sort(options)
 	prompt := survey.MultiSelect{
 		Message: message,
 		Options: options,
