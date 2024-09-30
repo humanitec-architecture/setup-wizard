@@ -14,7 +14,7 @@
 
 ## Installation
 
-### Install with Homebrew (MacOS or Linux)
+### Install with Homebrew (MacOS or Linux)
 
 1. Install the tap repository
 
@@ -205,6 +205,11 @@ The CLI wizard assumes that:
 - Managed Identity (default name `humanitec-operator-identity`) and Federated Credentials to use workload identity to access Azure Key Vault from Humanitec Operator.
 
 The CLI wizard outputs the name of every Azure resources generated and stores them in the state session.
+
+## Test Application
+
+As an optional step of the wizard CLI, a test application is deployed via Humanitec.  
+This application consists of a container that runs the [nginx image](https://hub.docker.com/_/nginx) in the alpine version. It exposes the internal port 80 on port 8080.
 
 ## Contact
 
