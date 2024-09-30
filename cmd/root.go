@@ -1,13 +1,11 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/humanitec/humctl-wizard/internal/message"
-	"github.com/humanitec/humctl-wizard/internal/session"
 )
 
 var silentMode bool
@@ -24,11 +22,6 @@ var rootCmd = &cobra.Command{
 		message.SetVerboseMode(verboseMode)
 		message.SetEmojiMode(!noEmoji)
 		message.SetColorMode(!noColor)
-
-		err := session.Load()
-		if err != nil {
-			return fmt.Errorf("failed to load session: %v", err)
-		}
 		return nil
 	},
 }

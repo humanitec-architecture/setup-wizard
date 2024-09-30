@@ -27,6 +27,11 @@ var connectCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 
+		err := session.Load(false)
+		if err != nil {
+			return fmt.Errorf("failed to load session: %v", err)
+		}
+
 		humanitecPlatform, err := initializeHumanitecPlatform(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to initialize humanitec platform: %w", err)
@@ -62,6 +67,10 @@ var connectCmd = &cobra.Command{
 			return fmt.Errorf("failed to write kubeconfig: %w", err)
 		}
 
+		message.DocumentationReference(
+			"The Humanitec Agent can be used to provide a secure and easy-to-administer way for the Humanitec Platform Orchestrator to access private endpoints in the customer’s infrastructure. It is intended to be run inside the customer’s infrastructure in such a way that it has network connectivity to the necessary systems the Platform Orchestrator needs access to.",
+			"https://developer.humanitec.com/integration-and-extensions/humanitec-agent/overview/",
+		)
 		isAgentInstalled, err := cluster.IsAgentInstalled(kubeConfigPath)
 		if err != nil {
 			return fmt.Errorf("failed to check if agent is already installed: %w", err)
@@ -94,9 +103,10 @@ var connectCmd = &cobra.Command{
 					return fmt.Errorf("failed to install agent: %w", err)
 				}
 				isAgentInstalled = true
+				message.Success("Humanitec Agent installed")
 			}
 		} else {
-			message.Info("Humanitec Agent already installed")
+			message.Success("Humanitec Agent already installed")
 		}
 		if isAgentInstalled {
 			if err = addAgentToClusterDefinition(ctx, humanitecPlatform, humanitecClusterId); err != nil {
@@ -104,6 +114,10 @@ var connectCmd = &cobra.Command{
 			}
 		}
 
+		message.DocumentationReference(
+			"The Humanitec Operator is a Kubernetes (K8s) operator that controls Deployments made with the Humanitec Platform Orchestrator. Since Humanitec Resources creation can depend on secrets, the Humanitec Operator is also capable of and responsible for provisioning the required Kubernetes Secret resources in the cluster.",
+			"https://developer.humanitec.com/integration-and-extensions/humanitec-operator/overview/",
+		)
 		isSecretStoreRegistered, err := provider.IsSecretStoreRegistered(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to check if operator is already installed: %w", err)
@@ -129,10 +143,15 @@ Deployments involving these entities will not work anymore proceeding with the W
 			if err != nil {
 				return fmt.Errorf("failed to install operator: %w", err)
 			}
-			message.Info("Humanitec Operator installed")
+			message.Success("Humanitec Operator installed")
 		} else {
-			message.Info("Humanitec Operator already installed")
+			message.Success("Humanitec Operator already installed")
 		}
+
+		message.DocumentationReference(
+			"The Test Application ensures seamless connectivity between system components, validating integration points as a foundation for further development.",
+			"https://github.com/humanitec-architecture/setup-wizard/blob/main/internal/platform/test_workload.score.yaml",
+		)
 
 		ifDeployTestApplication, err := message.BoolSelect("Do you want to deploy a test application?")
 		if err != nil {
@@ -208,7 +227,7 @@ func deployTestApplication(ctx context.Context, humanitecPlatform *platform.Huma
 		return fmt.Errorf("failed to wait for pipeline complete: %w", err)
 	}
 
-	message.Info("Test application deployed successfully")
+	message.Success("Test application deployed successfully")
 	return nil
 }
 
@@ -291,7 +310,7 @@ func connectCluster(ctx context.Context, provider cloud.Provider, clusterId, loa
 	if err != nil {
 		return "", fmt.Errorf("failed to connect cluster: %w", err)
 	}
-	message.Info("Cluster connected: %s", clusterId)
+	message.Success("Cluster connected: %s", clusterId)
 	return humanitecClusterId, nil
 }
 
@@ -340,6 +359,7 @@ func installAgent(ctx context.Context, humanitecPlatform *platform.HumanitecPlat
 
 	agentId := fmt.Sprintf("agent-%s", humClusterId)
 
+	message.Info("Creating Humanitec Agent Resource Definition: %s", agentId)
 	createResourceResp, err := humanitecPlatform.Client.CreateResourceDefinitionWithResponse(ctx, humanitecPlatform.OrganizationId, client.CreateResourceDefinitionRequestRequest{
 		Type:       "agent",
 		Name:       agentId,
@@ -358,6 +378,7 @@ func installAgent(ctx context.Context, humanitecPlatform *platform.HumanitecPlat
 		return fmt.Errorf("humanitec returned unexpected status code: %d with body %s", createResourceResp.StatusCode(), string(createResourceResp.Body))
 	}
 
+	message.Info("Creating Humanitec Agent: %s", agentId)
 	description := fmt.Sprintf("Agent for cluster %s", humClusterId)
 	createAgentResp, err := humanitecPlatform.Client.CreateAgentWithResponse(ctx, humanitecPlatform.OrganizationId, client.CreateAgentJSONRequestBody{
 		Description: &description,
@@ -454,6 +475,11 @@ func getLoadBalancer(ctx context.Context, provider cloud.Provider, clusterId str
 }
 
 func getCluster(ctx context.Context, provider cloud.Provider) (string, error) {
+	message.DocumentationReference(
+		"The Humanitec Platform Orchestrator is designed to integrate with your existing Kubernetes clusters wherever they’re hosted. You can configure the Orchestrator to run your Application in a single Kubernetes cluster or across different clusters in a multi-cloud setup while having an all-in-one solution for managing what is running where.",
+		"https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/",
+	)
+
 	if session.State.Application.Connect.CloudClusterId != "" {
 		message.Info("Using cluster from previous session: %s", session.State.Application.Connect.CloudClusterId)
 		return session.State.Application.Connect.CloudClusterId, nil
@@ -517,7 +543,7 @@ func initializeHumanitecPlatform(ctx context.Context) (*platform.HumanitecPlatfo
 			return nil, err
 		}
 	} else {
-		message.Info("Using Humanitec Token from config file")
+		message.Debug("Using Humanitec Token from config file")
 	}
 
 	platform, err := platform.NewHumanitecPlatform(humanitecToken)
@@ -610,6 +636,10 @@ func selectCloudProvider(ctx context.Context, humanitecPlatform *platform.Humani
 }
 
 func createCloudIdentity(ctx context.Context, provider cloud.Provider) (string, error) {
+	message.DocumentationReference(
+		"A Cloud Account allows you to store credentials for cloud infrastructure which the Platform Orchestrator needs to connect to at a central place in your Humanitec Organization. Configured Cloud Accounts can then be referenced in Resource Definitions to connect to cloud resources, removing the need to maintain those credentials for every single Resource Definition.",
+		"https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/overview/",
+	)
 	var cloudAccountId, cloudAccountName string
 	if session.State.Application.Connect.HumanitecCloudAccountId != "" {
 		cloudAccountId = session.State.Application.Connect.HumanitecCloudAccountId
@@ -635,7 +665,7 @@ func createCloudIdentity(ctx context.Context, provider cloud.Provider) (string, 
 	if err != nil {
 		return "", err
 	}
-	message.Info("Cloud identity created and successfully tested: %s", cloudIdentity)
+	message.Success("Cloud identity created and successfully tested: %s", cloudIdentity)
 	return cloudAccountId, nil
 }
 
