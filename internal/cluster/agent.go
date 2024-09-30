@@ -66,6 +66,8 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 	}
 
 	if !ifInstalled {
+		message.Info("Installing the agent with Helm: helm install %s oci://ghcr.io/humanitec/charts/humanitec-agent --namespace %s --create-namespace",
+			agentReleaseName, agentNamespace)
 		client := action.NewInstall(actionConfig)
 		client.Wait = true
 		client.CreateNamespace = true
@@ -83,6 +85,8 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 			return "", fmt.Errorf("failed to install agent: %w", err)
 		}
 	} else {
+		message.Info("Upgrading the agent with Helm: helm upgrade %s oci://ghcr.io/humanitec/charts/humanitec-agent --namespace %s",
+			agentReleaseName, agentNamespace)
 		client := action.NewUpgrade(actionConfig)
 		client.Wait = true
 		client.Wait = true

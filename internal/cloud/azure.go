@@ -181,6 +181,7 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 		if err != nil {
 			return "", fmt.Errorf("failed to select Managed Identity name: %w", err)
 		}
+		message.Info("Creating Managed Identity: az identity create --name %s --resource-group %s", resourceName, session.State.AzureProvider.ResourceGroup)
 		resp, err := idClient.CreateOrUpdate(ctx,
 			session.State.AzureProvider.ResourceGroup,
 			resourceName,
@@ -194,7 +195,6 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 		if err = p.waitManagedIdentityCreated(ctx, session.State.AzureProvider.ResourceGroup, resourceName, idClient); err != nil {
 			return "", fmt.Errorf("error waiting for Managed Identity to be created, %w", err)
 		}
-		message.Info("Managed Identity created: %s", *resp.Identity.Name)
 		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName = *resp.Identity.Name
 		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityClientId = *resp.Identity.Properties.ClientID
 		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityTenantId = *resp.Identity.Properties.TenantID
@@ -234,6 +234,12 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 		if err != nil {
 			return "", fmt.Errorf("failed to select Fedareted Credentials name: %w", err)
 		}
+		message.Info("Creating Federated Identity Credentials: az identity federated-credential create --name %s --identity-name %s --resource-group %s --issuer https://idtoken.humanitec.io --subject %s --audience api://AzureADTokenExchange",
+			resourceName,
+			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName,
+			session.State.AzureProvider.ResourceGroup,
+			p.humanitecPlatform.OrganizationId+"/"+humanitecCloudAccountId)
+
 		resp, err := fedClient.CreateOrUpdate(ctx,
 			session.State.AzureProvider.ResourceGroup,
 			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName,
@@ -256,7 +262,6 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 			fedClient); err != nil {
 			return "", fmt.Errorf("error waiting for Federated Credentials to be created, %w", err)
 		}
-		message.Info("Federated Credentials created: %s", *resp.FederatedIdentityCredential.Name)
 		session.State.AzureProvider.CreateCloudIdentity.FederatedCredentialsName = *resp.FederatedIdentityCredential.Name
 		if err = session.Save(); err != nil {
 			return "", fmt.Errorf("failed to save state: %w", err)
@@ -278,6 +283,7 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 	}
 
 	if session.State.AzureProvider.CreateCloudIdentity.HumanitecCloudAccountId == "" {
+		message.Info("Creating Humanitec Cloud Account: %s", humanitecCloudAccountId)
 		// The new federated credentials could take a few seconds to be propagated, so create Account with retries (as we do credentials check)
 		if err := createResourceAccountWithRetries(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, client.CreateResourceAccountRequestRequest{
 			Id:   humanitecCloudAccountId,
@@ -295,7 +301,6 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 		if err := session.Save(); err != nil {
 			return "", fmt.Errorf("failed to save state: %w", err)
 		}
-		message.Info("Humanitec Cloud Account created: %s", humanitecCloudAccountId)
 	} else {
 		message.Info("Humanitec Cloud Account already created, loading from state: %s", session.State.AzureProvider.CreateCloudIdentity.HumanitecCloudAccountId)
 		if err := checkResourceAccount(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, humanitecCloudAccountId); err != nil {
@@ -351,6 +356,11 @@ func (p *azureProvider) ConnectCluster(ctx context.Context, clusterId, loadBalan
 	aksClusterUserRoleID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
 		session.State.AzureProvider.SubscriptionID, roleID)
 
+	message.Info("Assigning AKS CLuster User Role to the managed identity: az role assignment create --assignee %s --role %s --scope %s",
+		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityPrincipalId,
+		aksClusterUserRoleID,
+		clusterId)
+
 	err = p.createRoleAssignmentWithRetries(ctx, azClient, clusterId, armauthorization.RoleAssignmentProperties{
 		PrincipalID:      to.Ptr(session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityPrincipalId),
 		RoleDefinitionID: to.Ptr(aksClusterUserRoleID),
@@ -365,10 +375,10 @@ func (p *azureProvider) ConnectCluster(ctx context.Context, clusterId, loadBalan
 	if err != nil {
 		return "", fmt.Errorf("failed to create Graph client, %w", err)
 	}
-	if session.State.AzureProvider.ConnectCluster.EntraIDGroupName != "" {
+	if session.State.AzureProvider.ConnectCluster.EntraIDGroupId != "" {
 		groupList, err := grClient.Groups().Get(ctx, &groups.GroupsRequestBuilderGetRequestConfiguration{
 			QueryParameters: &groups.GroupsRequestBuilderGetQueryParameters{
-				Filter: to.Ptr("displayName eq '" + session.State.AzureProvider.ConnectCluster.EntraIDGroupName + "'"),
+				Filter: to.Ptr("id eq '" + session.State.AzureProvider.ConnectCluster.EntraIDGroupId + "'"),
 			},
 		})
 		if err != nil {
@@ -379,28 +389,45 @@ func (p *azureProvider) ConnectCluster(ctx context.Context, clusterId, loadBalan
 			session.State.AzureProvider.ConnectCluster.EntraIDGroupName = ""
 			session.State.AzureProvider.ConnectCluster.EntraIDGroupId = ""
 		} else {
-			message.Info("Using Entra ID group from previous session: %s", session.State.AzureProvider.ConnectCluster.EntraIDGroupName)
+			message.Info("Using Entra ID group from previous session: %s (ID %s)", session.State.AzureProvider.ConnectCluster.EntraIDGroupName, session.State.AzureProvider.ConnectCluster.EntraIDGroupId)
 		}
 	}
 
-	if session.State.AzureProvider.ConnectCluster.EntraIDGroupName == "" {
+	if session.State.AzureProvider.ConnectCluster.EntraIDGroupId == "" {
 		groupName, err := message.Prompt("Enter a name for Entra ID security group to create a cluster binding:", "humanitec-sec-group")
 		if err != nil {
 			return "", fmt.Errorf("failed to select Entra ID group name: %w", err)
 		}
-		reqBody := models.NewGroup()
-		reqBody.SetDisplayName(to.Ptr(groupName))
-		reqBody.SetDescription(to.Ptr("Humanitec Identity Security Group"))
-		reqBody.SetMailNickname(to.Ptr(groupName))
-		reqBody.SetMailEnabled(to.Ptr(false))
-		reqBody.SetSecurityEnabled(to.Ptr(true))
-		result, err := grClient.Groups().Post(ctx, reqBody, &groups.GroupsRequestBuilderPostRequestConfiguration{})
+
+		groupList, err := grClient.Groups().Get(ctx, &groups.GroupsRequestBuilderGetRequestConfiguration{
+			QueryParameters: &groups.GroupsRequestBuilderGetQueryParameters{
+				Filter: to.Ptr("displayName eq '" + groupName + "'"),
+			},
+		})
 		if err != nil {
-			return "", fmt.Errorf("failed to create Entra ID group, %w", err)
+			return "", fmt.Errorf("failed to check if Entra ID group exists, %w", err)
 		}
-		message.Info("Entra ID security group created: %s", *result.GetDisplayName())
-		session.State.AzureProvider.ConnectCluster.EntraIDGroupName = *result.GetDisplayName()
-		session.State.AzureProvider.ConnectCluster.EntraIDGroupId = *result.GetId()
+
+		if len(groupList.GetValue()) == 0 {
+			message.Info("Creating Entra ID security group: az ad group create --display-name %s --mail-nickname %s",
+				groupName, groupName)
+			reqBody := models.NewGroup()
+			reqBody.SetDisplayName(to.Ptr(groupName))
+			reqBody.SetDescription(to.Ptr("Humanitec Identity Security Group"))
+			reqBody.SetMailNickname(to.Ptr(groupName))
+			reqBody.SetMailEnabled(to.Ptr(false))
+			reqBody.SetSecurityEnabled(to.Ptr(true))
+			result, err := grClient.Groups().Post(ctx, reqBody, &groups.GroupsRequestBuilderPostRequestConfiguration{})
+			if err != nil {
+				return "", fmt.Errorf("failed to create Entra ID group, %w", err)
+			}
+			session.State.AzureProvider.ConnectCluster.EntraIDGroupName = *result.GetDisplayName()
+			session.State.AzureProvider.ConnectCluster.EntraIDGroupId = *result.GetId()
+		} else {
+			message.Info("Entra ID security group already exists: %s", groupName)
+			session.State.AzureProvider.ConnectCluster.EntraIDGroupName = groupName
+			session.State.AzureProvider.ConnectCluster.EntraIDGroupId = *groupList.GetValue()[0].GetId()
+		}
 		if err = session.Save(); err != nil {
 			return "", fmt.Errorf("failed to save state: %w", err)
 		}
@@ -424,6 +451,11 @@ func (p *azureProvider) ConnectCluster(ctx context.Context, clusterId, loadBalan
 	}
 
 	// Create AKS CLuster User Role Assignment for the group
+	message.Info("Assigning AKS CLuster User Role to the group: az role assignment create --assignee %s --role %s --scope %s",
+		session.State.AzureProvider.ConnectCluster.EntraIDGroupId,
+		aksClusterUserRoleID,
+		clusterId)
+
 	err = p.createRoleAssignmentWithRetries(ctx, azClient, clusterId, armauthorization.RoleAssignmentProperties{
 		PrincipalID:      to.Ptr(session.State.AzureProvider.ConnectCluster.EntraIDGroupId),
 		RoleDefinitionID: to.Ptr(aksClusterUserRoleID),
@@ -461,6 +493,7 @@ func (p *azureProvider) ConnectCluster(ctx context.Context, clusterId, loadBalan
 	message.Debug("Using load balancer: %s", lb)
 
 	// Create Resource Definition
+	message.Info("Creating Cluster Resource Definition '%s'", humanitecClusterId)
 	resourceGroup, _, err := getAzureResourceGroupAndName(clusterId)
 	if err != nil {
 		return "", err
@@ -503,7 +536,6 @@ func (p *azureProvider) ConnectCluster(ctx context.Context, clusterId, loadBalan
 		if defResp.StatusCode() != http.StatusOK {
 			return "", fmt.Errorf("failed to create Cluster Resource Definition '%s': unexpected status code %d instead of %d", humanitecClusterId, resp.StatusCode(), http.StatusOK)
 		}
-		message.Info("Created Cluster Resource Definition '%s'", humanitecClusterId)
 	}
 
 	return humanitecClusterId, nil
@@ -576,6 +608,7 @@ func (p *azureProvider) ConfigureOperator(ctx context.Context, platform *platfor
 	}
 
 	// Register Secret Store in Humanitec
+	message.Info("Registering Secret Store with Humanitec: %s", humanitecSecretStoreId)
 	alreadyExists, err := ensureSecretStore(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, humanitecSecretStoreId,
 		client.PostOrgsOrgIdSecretstoresJSONRequestBody{
 			Id:      humanitecSecretStoreId,
@@ -591,8 +624,6 @@ func (p *azureProvider) ConfigureOperator(ctx context.Context, platform *platfor
 	}
 	if alreadyExists {
 		message.Info("Secret Store '%s' already registered with Humanitec", humanitecSecretStoreId)
-	} else {
-		message.Info("Secret Store '%s' registered with Humanitec", humanitecSecretStoreId)
 	}
 	session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId = humanitecSecretStoreId
 	if err = session.Save(); err != nil {
@@ -616,12 +647,17 @@ func (p *azureProvider) ConfigureOperator(ctx context.Context, platform *platfor
 		}
 		azClient := clientFactory.NewRoleAssignmentsClient()
 		roleID := "b86a8fe4-44ce-4948-aee5-eccb2c155cd7" // Built-in "Key Vault Secrets Officer" role
-		aksClusterUserRoleID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
+		aksKVSecretOfficerID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
 			session.State.AzureProvider.SubscriptionID, roleID)
+
+		message.Info("Assigning Key Vault Secrets Officer Role to the managed identity: az role assignment create --assignee %s --role %s --scope %s",
+			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId,
+			aksKVSecretOfficerID,
+			*keyVault.ID)
 
 		err = p.createRoleAssignmentWithRetries(ctx, azClient, *keyVault.ID, armauthorization.RoleAssignmentProperties{
 			PrincipalID:      to.Ptr(session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId),
-			RoleDefinitionID: to.Ptr(aksClusterUserRoleID),
+			RoleDefinitionID: to.Ptr(aksKVSecretOfficerID),
 			PrincipalType:    to.Ptr(armauthorization.PrincipalTypeServicePrincipal),
 		}, 30*time.Second)
 		if err != nil {
@@ -642,6 +678,9 @@ func (p *azureProvider) ConfigureOperator(ctx context.Context, platform *platfor
 				},
 			},
 		}
+		message.Info("Updating Key Vault access policy: az keyvault set-policy --name %s --secret-permissions \"get set delete recover\" --spn %s",
+			name,
+			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId)
 		_, err = kvClient.UpdateAccessPolicy(ctx, resourceGroup, name, armkeyvault.AccessPolicyUpdateKindAdd, armkeyvault.VaultAccessPolicyParameters{
 			Properties: &armkeyvault.VaultAccessPolicyProperties{
 				AccessPolicies: []*armkeyvault.AccessPolicyEntry{&accessPolicy},
@@ -709,6 +748,107 @@ func (p *azureProvider) IsSecretStoreRegistered(ctx context.Context) (bool, erro
 		}
 	}
 	return false, nil
+}
+
+func (p *azureProvider) CleanState(ctx context.Context) error {
+
+	toDelete := make([]string, 0)
+	if session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName != "" {
+		toDelete = append(toDelete, "Managed Identity "+session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName)
+	}
+	if session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName != "" {
+		toDelete = append(toDelete, "Managed Identity "+session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName)
+	}
+	if session.State.AzureProvider.ConnectCluster.EntraIDGroupId != "" {
+		toDelete = append(toDelete, "Managed Identity "+session.State.AzureProvider.ConnectCluster.EntraIDGroupId)
+	}
+	if len(toDelete) == 0 {
+		return nil
+	}
+
+	message.Info("The following resources will be removed from Azure:")
+	for _, msg := range toDelete {
+		message.Info("- %s", msg)
+	}
+	proceed, err := message.BoolSelect("Proceed?")
+	if err != nil {
+		return fmt.Errorf("failed to get user input: %w", err)
+	}
+	if !proceed {
+		return nil
+	}
+
+	idClient, err := armmsi.NewUserAssignedIdentitiesClient(session.State.AzureProvider.SubscriptionID, p.credential, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create Managed Identity client, %w", err)
+	}
+
+	if session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName != "" {
+		message.Info("Deleting Managed Identity: az identity delete --name %s --resource-group %s",
+			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName, session.State.AzureProvider.ResourceGroup)
+		if _, err := idClient.Delete(ctx,
+			session.State.AzureProvider.ResourceGroup,
+			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName,
+			nil); err != nil {
+			var respErr *azcore.ResponseError
+			if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+				message.Info("The resource doesn't exist or has been already removed")
+			} else {
+				return fmt.Errorf("failed to delete Managed Identity %s, %w", session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName, err)
+			}
+		}
+	}
+	session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName = ""
+	session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityClientId = ""
+	session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityPrincipalId = ""
+	if err = session.Save(); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	if session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName != "" {
+		message.Info("Deleting Managed Identity: az identity delete --name %s --resource-group %s",
+			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName, session.State.AzureProvider.ResourceGroup)
+		if _, err := idClient.Delete(ctx,
+			session.State.AzureProvider.ResourceGroup,
+			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName,
+			nil); err != nil {
+			var respErr *azcore.ResponseError
+			if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+				message.Info("The resource doesn't exist or has been already removed")
+			} else {
+				return fmt.Errorf("failed to delete Managed Identity %s, %w", session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName, err)
+			}
+		}
+	}
+	session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName = ""
+	session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityClientId = ""
+	session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId = ""
+	if err = session.Save(); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	grClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(p.credential, []string{"https://graph.microsoft.com/.default"})
+	if err != nil {
+		return fmt.Errorf("failed to create Graph client, %w", err)
+	}
+
+	if session.State.AzureProvider.ConnectCluster.EntraIDGroupId != "" {
+		message.Info("Deleting Entra ID security group: az ad group delete --group %s", session.State.AzureProvider.ConnectCluster.EntraIDGroupId)
+		if err = grClient.Groups().ByGroupId(session.State.AzureProvider.ConnectCluster.EntraIDGroupId).Delete(ctx, nil); err != nil {
+			if strings.Contains(err.Error(), "does not exist") {
+				message.Info("The resource doesn't exist or has been already removed")
+			} else {
+				return fmt.Errorf("failed to delete Entra ID group, %w", err)
+			}
+		}
+	}
+	session.State.AzureProvider.ConnectCluster.EntraIDGroupId = ""
+	session.State.AzureProvider.ConnectCluster.EntraIDGroupName = ""
+	if err = session.Save(); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	return nil
 }
 
 func (p *azureProvider) getSubscriptionList(ctx context.Context) ([]string, error) {
@@ -959,6 +1099,7 @@ func (p *azureProvider) enableIdentityInCluster(ctx context.Context, opCluster a
 		}
 	}
 	if session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName == "" {
+		message.Info("Creating Managed Identity: az identity create --name %s --resource-group %s", managedIdentityName, resourceGroup)
 		resp, err := idClient.CreateOrUpdate(ctx,
 			resourceGroup,
 			managedIdentityName,
@@ -972,7 +1113,6 @@ func (p *azureProvider) enableIdentityInCluster(ctx context.Context, opCluster a
 		if err = p.waitManagedIdentityCreated(ctx, resourceGroup, managedIdentityName, idClient); err != nil {
 			return fmt.Errorf("error waiting for Managed Identity to be created, %w", err)
 		}
-		message.Info("Managed Identity created: %s", *resp.Identity.Name)
 		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName = *resp.Identity.Name
 		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityClientId = *resp.Identity.Properties.ClientID
 		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId = *resp.Identity.Properties.PrincipalID
@@ -1006,6 +1146,13 @@ func (p *azureProvider) enableIdentityInCluster(ctx context.Context, opCluster a
 	}
 	if session.State.AzureProvider.ConfigureOperatorAccess.FederatedCredentialsName == "" {
 		serviceAccount := fmt.Sprintf("system:serviceaccount:%s:%s", namespace, sa)
+		message.Info("Creating Federated Identity Credentials: az identity federated-credential create --name %s --identity-name %s --resource-group %s --issuer %s --subject %s --audience api://AzureADTokenExchange",
+			federatedCredentialsName,
+			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName,
+			resourceGroup,
+			*opCluster.Properties.OidcIssuerProfile.IssuerURL,
+			serviceAccount,
+		)
 		resp, err := fedClient.CreateOrUpdate(ctx,
 			resourceGroup,
 			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName,
@@ -1028,7 +1175,6 @@ func (p *azureProvider) enableIdentityInCluster(ctx context.Context, opCluster a
 			fedClient); err != nil {
 			return fmt.Errorf("error waiting for Federated Credentials to be created, %w", err)
 		}
-		message.Info("Federated Credentials created: %s", *resp.FederatedIdentityCredential.Name)
 		session.State.AzureProvider.ConfigureOperatorAccess.FederatedCredentialsName = *resp.FederatedIdentityCredential.Name
 		if err = session.Save(); err != nil {
 			return fmt.Errorf("failed to save state: %w", err)

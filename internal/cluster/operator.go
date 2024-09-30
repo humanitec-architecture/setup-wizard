@@ -82,6 +82,8 @@ func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]
 		values = map[string]interface{}{}
 	}
 	if !ifInstalled {
+		message.Info("Installing the operator with Helm: helm install %s oci://ghcr.io/humanitec/charts/humanitec-operator --namespace %s --create-namespace",
+			operatorReleaseName, namespace)
 		client := action.NewInstall(actionConfig)
 		client.Wait = true
 		client.CreateNamespace = true
@@ -94,6 +96,8 @@ func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]
 			return "", fmt.Errorf("failed to install operator: %w", err)
 		}
 	} else {
+		message.Info("Upgrading the operator with Helm: helm upgrade %s oci://ghcr.io/humanitec/charts/humanitec-operator --namespace %s",
+			operatorReleaseName, namespace)
 		client := action.NewUpgrade(actionConfig)
 		client.Wait = true
 		client.Wait = true
@@ -159,6 +163,7 @@ func ApplySecretStore(ctx context.Context, kubeconfig, namespace, secretsStoreId
 		return fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
+	message.Info("Creating SecretStore resource in the cluster: %s", secretsStoreId)
 	object.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "humanitec.io",
 		Version: "v1alpha1",
@@ -209,12 +214,13 @@ func ConfigureDriverAuth(ctx context.Context, kubeconfig, namespace string, plat
 		"privateKey":              string(keyPEM),
 		"humanitecOrganisationID": session.State.Application.Connect.HumanitecOrganizationId,
 	}
+	message.Info("Creating K8s Secret containing private key: humanitec-operator-private-key")
 	if err = ApplySecret(ctx, kubeconfig, namespace, "humanitec-operator-private-key", data); err != nil {
 		return fmt.Errorf("failed to create private key secret: %w", err)
 	}
-	message.Info("K8s Secret containing private key created")
 
 	// Register public key in the orchestrator
+	message.Info("Registering public key in Humanitec")
 	body, err := json.Marshal(string(pubPEM))
 	if err != nil {
 		return fmt.Errorf("failed to selialize public key: %w", err)
@@ -229,7 +235,6 @@ func ConfigureDriverAuth(ctx context.Context, kubeconfig, namespace string, plat
 	if resp.StatusCode() != http.StatusOK {
 		return fmt.Errorf("failed to register public key, status code: %s", resp.Status())
 	}
-	message.Info("Public key registered in Humanitec")
 
 	session.State.Application.Connect.DriverAuthConfigured = true
 	if err := session.Save(); err != nil {

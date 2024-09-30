@@ -12,7 +12,7 @@ import (
 
 var ErrStateFileNotFound = errors.New("state file not found")
 
-func Load() error {
+func Load(force bool) error {
 	dirname, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get user home directory: %w", err)
@@ -26,9 +26,12 @@ func Load() error {
 		}
 		message.Debug("State file not found, creating new state")
 	} else {
-		answer, err := message.BoolSelect("Do you want to load the state from the previous session?")
-		if err != nil {
-			return fmt.Errorf("failed to get user input: %w", err)
+		answer := true
+		if !force {
+			answer, err = message.BoolSelect("Do you want to load the state from the previous session?")
+			if err != nil {
+				return fmt.Errorf("failed to get user input: %w", err)
+			}
 		}
 		if answer {
 			if err := json.Unmarshal(stateFile, &State); err != nil {

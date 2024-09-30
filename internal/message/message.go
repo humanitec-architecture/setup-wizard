@@ -100,6 +100,11 @@ func Info(format string, args ...any) {
 	message.Infoln(emoji.Information, fmt.Sprintf(format, args...))
 }
 
+func DocumentationReference(msg, url string) {
+	message.HorizontalRuler()
+	message.Titleln(emoji.Books, fmt.Sprintf("%s More information: %s", msg, url))
+}
+
 func Success(format string, args ...any) {
 	message.Infoln(emoji.CheckMarkButton, fmt.Sprintf(format, args...))
 }

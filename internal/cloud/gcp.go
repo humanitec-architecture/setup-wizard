@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/humanitec/humanitec-go-autogen/client"
@@ -188,6 +189,9 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 
 	if !wliPoolExists {
 		wliPoolName := WorkloadIdentityPoolBaseName + "-" + session.State.GCPProvider.GCPResourcesPostfix
+		message.Info("Creating Workload Identity Pool: gcloud iam workload-identity-pools create %s --location=\"global\" --project %s",
+			wliPoolName,
+			projectID)
 		if _, err := iamService.Projects.Locations.WorkloadIdentityPools.Create(
 			fmt.Sprintf("projects/%s/locations/global", projectID),
 			&iam.WorkloadIdentityPool{
@@ -223,6 +227,13 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 
 	if !wliProviderExists {
 		wliProviderName := OIDCWorkloadIdentityPoolProviderBaseName + "-" + session.State.GCPProvider.GCPResourcesPostfix
+		message.Info("Creating OIDC Workload Identity Pool Provider: gcloud iam workload-identity-pools providers create-oidc %s --location=\"global\" --workload-identity-pool=\"%s\" --issuer-uri=\"%s\" --attribute-mapping=\"%s=%s\" --project=%s",
+			wliProviderName,
+			wliPoolName,
+			OIDCWorkloadIdentityPoolProviderIssuerURI,
+			OIDCWorkloadIdentityPoolProviderAttributeMappingKey,
+			OIDCWorkloadIdentityPoolProviderAttributeMappingValue,
+			projectID)
 		if _, err := iamService.Projects.Locations.WorkloadIdentityPools.Providers.Create(
 			fmt.Sprintf("projects/%s/locations/global/workloadIdentityPools/%s", projectID, wliPoolName),
 			&iam.WorkloadIdentityPoolProvider{
@@ -257,6 +268,11 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 	if !humServiceAccountExists {
 		saName := HumanitecServiceAccountName + "-" + session.State.GCPProvider.GCPResourcesPostfix
 		var sa *iam.ServiceAccount
+		message.Info("Creating GCP Service Account to be used by the Humanitec Cloud Account: gcloud iam service-accounts create %s --description=\"%s\" --display-name=\"%s\" --project=%s",
+			saName,
+			HumanitecServiceAccountDescription,
+			saName,
+			projectID)
 		if sa, err = iamService.Projects.ServiceAccounts.Create(
 			fmt.Sprintf("projects/%s", projectID),
 			&iam.CreateServiceAccountRequest{
@@ -301,6 +317,10 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 		})
 	}
 
+	message.Info("Adding policy binding between the Service Account and the Workload Identitly Federation: gcloud iam service-accounts add-iam-policy-binding %s --member='%s' --role='roles/%s' --format=json",
+		gcpServiceAccountEmail,
+		iamPolicyBindingMember,
+		HumanitecServiceAccountPolicyBindingRole)
 	if _, err = iamService.Projects.ServiceAccounts.SetIamPolicy(
 		gcpServiceAccountFullID,
 		&iam.SetIamPolicyRequest{
@@ -444,6 +464,12 @@ func (p *gcpProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 
 	roleName := IAMCustomRoleBaseName + "_" + session.State.GCPProvider.GCPResourcesPostfix
 	if !iamCustomRoleExists {
+		message.Info("Creating IAM custom role: gcloud iam roles create %s --project %s --title=\"Humanitec GKE Access\" --description=\"%s\" --permissions='%s'",
+			roleName,
+			projectID,
+			IAMCustomRoleDescription,
+			"container.clusters.get",
+		)
 		if _, err = iamService.Projects.Roles.Create(
 			"projects/"+projectID,
 			&iam.CreateRoleRequest{
@@ -493,6 +519,10 @@ func (p *gcpProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 			})
 	}
 
+	message.Info("Grant the IAM custom role to the GCP Service Account used by the Humanitec Cloud Account: gcloud projects add-iam-policy-binding %s --member='%s' --role='roles/%s'",
+		projectID,
+		iamBindingMember,
+		roleName)
 	if _, err = crmService.Projects.SetIamPolicy(
 		projectID,
 		&cloudresourcemanager.SetIamPolicyRequest{
@@ -727,6 +757,12 @@ func (p *gcpProvider) ConfigureOperator(ctx context.Context, platform *platform.
 
 	roleName := IAMSecretManagerRoleBaseName + "_" + session.State.GCPProvider.GCPResourcesPostfix
 	if !iamCustomRoleExists {
+		message.Info("Creating IAM custom role: gcloud iam roles create %s --title=\"Secret Reader / Write\" -project \"%s\" --description=\"%s\" --permissions='%s'",
+			projectID,
+			roleName,
+			IAMSecretManagerRoleDescription,
+			"secretmanager.secrets.create,secretmanager.secrets.delete,secretmanager.secrets.update,secretmanager.versions.add,secretmanager.versions.access,secretmanager.versions.list",
+		)
 		if _, err = iamService.Projects.Roles.Create(
 			"projects/"+projectID,
 			&iam.CreateRoleRequest{
@@ -778,7 +814,11 @@ func (p *gcpProvider) ConfigureOperator(ctx context.Context, platform *platform.
 				Members: []string{iamPolicyBindingMember},
 			})
 	}
-
+	message.Info("Assigning to the Operator Service Account the role to access the Secret Store: gcloud projects add-iam-policy-binding \"%s\" --member='%s' --role='projects/%s/roles/%s' --format=json",
+		projectID,
+		iamPolicyBindingMember,
+		projectID,
+		roleName)
 	if _, err = crmService.Projects.SetIamPolicy(
 		projectID,
 		&cloudresourcemanager.SetIamPolicyRequest{
@@ -839,6 +879,147 @@ func (p *gcpProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	return nil
 }
 
+func (p *gcpProvider) CleanState(ctx context.Context) error {
+	projectID := session.State.GCPProvider.GPCProject.ProjectID
+
+	iamService, err := iam.NewService(ctx, option.WithCredentials(p.credentials))
+	if err != nil {
+		return fmt.Errorf("failed to create an IAM service to delete gcp IAM resources: %w", err)
+	}
+
+	if wliPoolName := session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName; wliPoolName != "" {
+		fullWlName := fmt.Sprintf("projects/%s/locations/global/workloadIdentityPools/%s", projectID, wliPoolName)
+		b, err := message.BoolSelect(fmt.Sprintf("Do you want to delete the Workload Identity Pool '%s'?", fullWlName))
+		if err != nil {
+			return fmt.Errorf("failed to prompt user: %w", err)
+		}
+
+		if b {
+			message.Info("Deleting Workload Identity Pool: gcloud iam workload-identity-pools delete %s --location=\"global\" --project %s",
+				wliPoolName,
+				projectID)
+			if _, err := iamService.Projects.Locations.WorkloadIdentityPools.Delete(fullWlName).Context(ctx).Do(); err != nil {
+				if notFound, parsedErr := isGoogleAPIErrorNotFound(err, fmt.Sprintf("failed to check Workload Identity Pool '%s' existence", wliPoolName)); notFound {
+					message.Info("Workload Identity Pool '%s' already deleted", wliPoolName)
+				} else {
+					return parsedErr
+				}
+			} else {
+				message.Info("Workload Identity Pool '%s' deleted", wliPoolName)
+			}
+
+			session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName = ""
+			session.State.GCPProvider.CloudIdentity.OidcWorkloadIdentityPoolProviderName = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		}
+	}
+
+	if humGCPServiceAccount := session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountName; humGCPServiceAccount != "" {
+		gcpServiceAccountEmail := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountName, projectID)
+		b, err := message.BoolSelect(fmt.Sprintf("Do you want to delete the GCP Service Account '%s'?", gcpServiceAccountEmail))
+		if err != nil {
+			return fmt.Errorf("failed to prompt user: %w", err)
+		}
+
+		if b {
+			message.Info("Deleting GCP Service Account: gcloud iam service-accounts delete %s",
+				gcpServiceAccountEmail)
+			if _, err := iamService.Projects.ServiceAccounts.Delete(fmt.Sprintf("projects/%s/serviceAccounts/%s", projectID, gcpServiceAccountEmail)).Context(ctx).Do(); err != nil {
+				if notFound, parsedErr := isGoogleAPIErrorNotFound(err, fmt.Sprintf("failed to delete GCP Service Account '%s'", gcpServiceAccountEmail)); notFound {
+					message.Info("GCP Service Account '%s' already deleted", gcpServiceAccountEmail)
+				} else {
+					return parsedErr
+				}
+			} else {
+				message.Info("GCP Service Account '%s' deleted", gcpServiceAccountEmail)
+			}
+
+			session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountName = ""
+			session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountUniqueID = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		}
+	}
+
+	if gkeAccessIAMCustomRole := session.State.GCPProvider.ConnectCluster.IAMCustomRoleName; gkeAccessIAMCustomRole != "" {
+		gkeAccessIAMCustomRoleFullName := fmt.Sprintf("projects/%s/roles/%s", projectID, gkeAccessIAMCustomRole)
+		b, err := message.BoolSelect(fmt.Sprintf("Do you want to delete the IAM Custom Role '%s'?", gkeAccessIAMCustomRoleFullName))
+		if err != nil {
+			return fmt.Errorf("failed to prompt user: %w", err)
+		}
+
+		if b {
+			message.Info("Deleting IAM Custom Role: gcloud iam role delete %s --project %s",
+				gkeAccessIAMCustomRole, projectID)
+			if _, err := iamService.Projects.Roles.Delete(gkeAccessIAMCustomRoleFullName).Context(ctx).Do(); err != nil {
+				if notFound, parsedErr := isGoogleGRPCErrorNotFound(err, fmt.Sprintf("failed to delete IAM Custom Role '%s'", gkeAccessIAMCustomRole)); notFound {
+					message.Info("IAM Custom Role '%s' already deleted", gkeAccessIAMCustomRole)
+				} else {
+					return parsedErr
+				}
+			} else {
+				message.Info("IAM Custom Role '%s' deleted", gkeAccessIAMCustomRole)
+			}
+
+			session.State.GCPProvider.ConnectCluster.IAMCustomRoleName = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		}
+	}
+
+	if secretManagerAccessIAMCustomRole := session.State.GCPProvider.ConfigureOperatorAccess.IAMRoleSecretManager; secretManagerAccessIAMCustomRole != "" {
+		secretManagerAccessIAMCustomRoleFullName := fmt.Sprintf("projects/%s/roles/%s", projectID, secretManagerAccessIAMCustomRole)
+		b, err := message.BoolSelect(fmt.Sprintf("Do you want to delete the IAM Custom Role '%s'?", secretManagerAccessIAMCustomRoleFullName))
+		if err != nil {
+			return fmt.Errorf("failed to prompt user: %w", err)
+		}
+
+		if b {
+			message.Info("Deleting IAM Custom Role: gcloud iam role delete %s --project %s",
+				secretManagerAccessIAMCustomRole, projectID)
+			if _, err := iamService.Projects.Roles.Delete(secretManagerAccessIAMCustomRoleFullName).Context(ctx).Do(); err != nil {
+				if notFound, parsedErr := isGoogleGRPCErrorNotFound(err, fmt.Sprintf("failed to delete IAM Custom Role '%s'", secretManagerAccessIAMCustomRole)); notFound {
+					message.Info("IAM Custom Role '%s' already deleted", secretManagerAccessIAMCustomRole)
+				} else {
+					return parsedErr
+				}
+			} else {
+				message.Info("IAM Custom Role '%s' deleted", secretManagerAccessIAMCustomRole)
+			}
+			session.State.GCPProvider.ConfigureOperatorAccess.IAMRoleSecretManager = ""
+			session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		}
+	}
+
+	message.Info("There are no more GCP resources stored in the wizard state file to delete in the project '%s'", projectID)
+	b, err := message.BoolSelect("Do you want to reset project ID in the wizard state file?")
+	if err != nil {
+		return fmt.Errorf("failed to prompt user: %w", err)
+	}
+	if b {
+		session.State.GCPProvider.GPCProject = struct {
+			ProjectID     string `json:"projectID"`
+			ProjectNumber int64  `json:"projectNumber"`
+		}{}
+		if err = session.Save(); err != nil {
+			return fmt.Errorf("failed to save state: %w", err)
+		}
+	}
+
+	session.State.GCPProvider.GCPResourcesPostfix = ""
+	if err = session.Save(); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	return nil
+}
 func isGoogleAPIErrorNotFound(err error, msg string) (bool, error) {
 	gErr, ok := err.(*googleapi.Error)
 	if ok {
@@ -860,6 +1041,10 @@ func isGoogleGRPCErrorNotFound(err error, msg string) (bool, error) {
 			return true, nil
 		case codes.PermissionDenied:
 			return false, fmt.Errorf("%s: permission denied", msg)
+		default:
+			if strings.Contains(st.Message(), "already deleted") {
+				return true, nil
+			}
 		}
 	}
 	return false, fmt.Errorf("%s: %w", msg, err)

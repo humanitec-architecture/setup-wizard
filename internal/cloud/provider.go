@@ -18,4 +18,5 @@ type Provider interface {
 	ListSecretManagers(ctx context.Context) ([]string, error)
 	ConfigureOperator(ctx context.Context, platform *platform.HumanitecPlatform, kubeconfig, operatorNamespace, clusterId, secretManager, humanitecSecretStoreId string) error
 	IsSecretStoreRegistered(ctx context.Context) (bool, error)
+	CleanState(ctx context.Context) error
 }

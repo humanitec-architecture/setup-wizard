@@ -4,6 +4,10 @@ metadata:
 
 containers:
   demo:
-    image: busybox
-    command: ["/bin/sh"]
-    args: ["-c", "while true; do printenv && sleep 60; done"]
+    image: nginx:alpine
+service:
+  ports:
+    web:
+      port: 8080
+      targetPort: 80
+

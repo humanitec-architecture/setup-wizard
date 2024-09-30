@@ -14,7 +14,7 @@ func (p *HumanitecPlatform) CreateEnvTypeMatchingCriteria(ctx context.Context, e
 		return fmt.Errorf("error fetching resource definition: %w", err)
 	}
 	if resDef.JSON200 == nil {
-		return fmt.Errorf("error fetching resource definition, status code %s: %w", resDef.Status(), err)
+		return fmt.Errorf("error fetching resource definition, status code %s: %v", resDef.Status(), string(resDef.Body))
 	}
 	if resDef.JSON200.Criteria != nil {
 		for _, criteria := range *resDef.JSON200.Criteria {

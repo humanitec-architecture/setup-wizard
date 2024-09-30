@@ -87,6 +87,7 @@ func ensurek8sClusterRole(ctx context.Context, k8sClient *kubernetes.Clientset, 
 		return true, nil
 	}
 
+	message.Info("Creating Kubernetes Cluster Role: %s", roleName)
 	clusterRole := &k8s_rbac.ClusterRole{
 		ObjectMeta: k8s_meta.ObjectMeta{
 			Name: roleName,
@@ -207,7 +208,6 @@ func createClusterRoleAndBinding(ctx context.Context, clientset *kubernetes.Clie
 	} else if alreadyExists {
 		message.Info("Kubernetes Cluster Role '%s' already exists", clusterRoleName)
 	} else {
-		message.Info("Kubernetes Cluster Role '%s' created", clusterRoleName)
 		if err = session.Save(); err != nil {
 			return fmt.Errorf("failed to save state: %w", err)
 		}
@@ -232,12 +232,12 @@ func createClusterRoleAndBinding(ctx context.Context, clientset *kubernetes.Clie
 			Name:     &k8sSession.ClusterRoleName,
 		})
 
+	message.Info("Creating Kubernetes Cluster Role Binding: %s", clusterRoleBindingName)
 	if _, err := clientset.RbacV1().ClusterRoleBindings().Apply(ctx, clusterRoleBinding, k8s_meta.ApplyOptions{
 		FieldManager: "humctl-wizard",
 	}); err != nil {
 		return fmt.Errorf("failed to create Kubernetes Custom Role Binding '%s': %w", clusterRoleBindingName, err)
 	}
-	message.Info("Kubernetes Cluster Role Binding '%s' created", clusterRoleBindingName)
 	k8sSession.ClusterRoleBindingName = clusterRoleBindingName
 
 	return nil

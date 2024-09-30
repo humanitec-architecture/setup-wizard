@@ -2,8 +2,8 @@ package cloud
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path"
@@ -23,9 +23,14 @@ import (
 	"github.com/aws/smithy-go/logging"
 	"github.com/google/uuid"
 	"github.com/humanitec/humanitec-go-autogen/client"
+	k8s_rbac "k8s.io/api/rbac/v1"
+	k8s_meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
+	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/humanitec/humctl-wizard/internal/cluster"
 	"github.com/humanitec/humctl-wizard/internal/message"
@@ -39,6 +44,7 @@ import (
 type awsProvider struct {
 	awsConfig         aws.Config
 	humanitecPlatform *platform.HumanitecPlatform
+	k8sClient   *kubernetes.Clientset
 }
 
 var humanitecOperatorServiceAccount = "humanitec-operator-controller-manager"
@@ -142,9 +148,9 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 		if err := session.Save(); err != nil {
 			return "", fmt.Errorf("failed to save state: %w", err)
 		}
-		message.Debug("AWS Role created: %s", *createRoleResp.Role.RoleName)
+		message.Info("AWS Role created: %s", *createRoleResp.Role.RoleName)
 	} else {
-		message.Debug("AWS Role already created, loading from state: %s", session.State.AwsProvider.CreateCloudIdentity.RoleName)
+		message.Info("AWS Role already created, loading from state: %s", session.State.AwsProvider.CreateCloudIdentity.RoleName)
 	}
 
 	if session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId != "" {
@@ -252,6 +258,11 @@ func (a *awsProvider) ListLoadBalancers(ctx context.Context, clusterId string) (
 }
 
 func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalancerName, humanitecCloudAccountId, humanitecClusterId, humanitecClusterName string) (string, error) {
+	err := a.ensureK8sClient(ctx, clusterId)
+	if err != nil {
+		return "", fmt.Errorf("failed to ensure k8s client, %w", err)
+	}
+	
 	eksClient := eks.NewFromConfig(a.awsConfig)
 	clusterResp, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
 		Name: &clusterId,
@@ -264,10 +275,6 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 	}
 
 	iamClient := iam.NewFromConfig(a.awsConfig)
-
-	if clusterResp.Cluster.AccessConfig.AuthenticationMode == types.AuthenticationModeConfigMap {
-		return "", errors.New("cluster needs to support IAM authentication, please change the cluster authentication mode or use a different cluster")
-	}
 
 	if session.State.AwsProvider.ConnectCluster.PolicyArn != "" {
 		isPolicyExists, err := a.isPolicyExists(ctx, session.State.AwsProvider.ConnectCluster.PolicyArn)
@@ -338,45 +345,75 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 		message.Info("Policy %s already attached to role %s", session.State.AwsProvider.ConnectCluster.PolicyName, session.State.AwsProvider.CreateCloudIdentity.RoleName)
 	}
 
-	isAccessEntryCreated, err := a.isAccessEntryExists(ctx, *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
-	if err != nil {
-		return "", fmt.Errorf("failed to check if access entry exists, %w", err)
+	if session.State.AwsProvider.ConnectCluster.K8sRbacGroupName == "" {
+		session.State.AwsProvider.ConnectCluster.K8sRbacGroupName = generateAwsK8sGroupName("humanitec-access")
+	}
+	if err := session.Save(); err != nil {
+		return "", fmt.Errorf("failed to save state: %w", err)
+	}
+	rbacSubject := k8s_rbac.Subject{
+		Kind: "Group",
+		Name: session.State.AwsProvider.ConnectCluster.K8sRbacGroupName,
 	}
 
-	if !isAccessEntryCreated {
-		_, err = eksClient.CreateAccessEntry(ctx, &eks.CreateAccessEntryInput{
-			ClusterName:  clusterResp.Cluster.Name,
-			PrincipalArn: &session.State.AwsProvider.CreateCloudIdentity.RoleArn,
-		})
+	if session.State.AwsProvider.ConnectCluster.K8s == nil {
+		session.State.AwsProvider.ConnectCluster.K8s = &session.K8s{}
+	}
+	if err = createClusterRoleAndBinding(ctx, a.k8sClient, rbacSubject, session.State.AwsProvider.ConnectCluster.K8s); err != nil {
+		return "", err
+	}
+	if err := session.Save(); err != nil {
+		return "", fmt.Errorf("failed to save state: %w", err)
+	}
+
+	if clusterResp.Cluster.AccessConfig.AuthenticationMode == types.AuthenticationModeConfigMap {
+		configMap, err := a.k8sClient.CoreV1().ConfigMaps("kube-system").Get(ctx, "aws-auth", k8s_meta.GetOptions{})
 		if err != nil {
-			return "", fmt.Errorf("failed to create access entry, %w", err)
+			if !k8sErrors.IsNotFound(err) {
+				return "", fmt.Errorf("failed to get ConfigMap 'aws-auth': %w", err)
+			}
+			configMap = &v1.ConfigMap{}
+			configMap.APIVersion = "v1"
 		}
-		message.Info("AWS Access Entry to cluster %s created for %s", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+		if configMap.Data == nil {
+			configMap.Data = map[string]string{}
+		}
+
+		if configMap.Data["mapRoles"] == "" || !strings.Contains(configMap.Data["mapRoles"], session.State.AwsProvider.CreateCloudIdentity.RoleArn) {
+			configMap.Data["mapRoles"] = strings.Join([]string{
+				configMap.Data["mapRoles"],
+				"- rolearn: " + session.State.AwsProvider.CreateCloudIdentity.RoleArn,
+				"  username: system:node:{{EC2PrivateDNSName}}",
+				"  groups:",
+				"  - " + session.State.AwsProvider.ConnectCluster.K8sRbacGroupName,
+			}, "\n")
+
+			_, err = a.k8sClient.CoreV1().ConfigMaps("kube-system").Update(ctx, configMap, k8s_meta.UpdateOptions{})
+			if err != nil {
+				return "", fmt.Errorf("failed to update ConfigMap 'aws-auth': %w", err)
+			}
+		}
 	} else {
-		message.Info("AWS Access Entry to cluster %s already created for %s", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
-	}
-
-	adminAccessPolicyArn := "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-	isAccessPolicyAssociated, err := a.isAccessPolicyAlreadyAssociated(ctx, *clusterResp.Cluster.Name, adminAccessPolicyArn, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
-	if err != nil {
-		return "", fmt.Errorf("failed to check if access policy is associated, %w", err)
-	}
-
-	if !isAccessPolicyAssociated {
-		_, err = eksClient.AssociateAccessPolicy(ctx, &eks.AssociateAccessPolicyInput{
-			AccessScope: &types.AccessScope{
-				Type: types.AccessScopeTypeCluster,
-			},
-			ClusterName:  clusterResp.Cluster.Name,
-			PolicyArn:    &adminAccessPolicyArn,
-			PrincipalArn: &session.State.AwsProvider.CreateCloudIdentity.RoleArn,
-		})
+		isAccessEntryCreated, err := a.isAccessEntryExists(ctx, *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
 		if err != nil {
-			return "", fmt.Errorf("failed to associate access policy, %w", err)
+			return "", fmt.Errorf("failed to check if access entry exists, %w", err)
 		}
-		message.Info("AWS Access Policy to cluster %s for role %s as cluster admin associated", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleName)
-	} else {
-		message.Info("AWS Access Policy to cluster %s for role %s as cluster admin already associated", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleName)
+
+		if !isAccessEntryCreated {
+			_, err = eksClient.CreateAccessEntry(ctx, &eks.CreateAccessEntryInput{
+				ClusterName:  clusterResp.Cluster.Name,
+				PrincipalArn: &session.State.AwsProvider.CreateCloudIdentity.RoleArn,
+				KubernetesGroups: []string{
+					session.State.AwsProvider.ConnectCluster.K8sRbacGroupName,
+				},
+			})
+			if err != nil {
+				return "", fmt.Errorf("failed to create access entry, %w", err)
+			}
+			message.Info("AWS Access Entry to cluster %s created for %s", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+		} else {
+			message.Info("AWS Access Entry to cluster %s already created for %s", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+		}
 	}
 
 	clusterValues := map[string]interface{}{
@@ -482,33 +519,10 @@ func (a *awsProvider) IsClusterPubliclyAvailable(ctx context.Context, clusterId 
 }
 
 func (a *awsProvider) WriteKubeConfig(ctx context.Context, clusterId string) (string, error) {
-	eksClient := eks.NewFromConfig(a.awsConfig)
-	cluster, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
-		Name: &clusterId,
-	})
+	kubeConfig, err := a.getKubeConfig(ctx, clusterId)
 	if err != nil {
-		return "", fmt.Errorf("failed to describe cluster, %w", err)
+		return "", fmt.Errorf("failed to get kubeconfig, %w", err)
 	}
-	if cluster == nil || cluster.Cluster == nil || cluster.Cluster.CertificateAuthority == nil || cluster.Cluster.Endpoint == nil {
-		return "", fmt.Errorf("failed to describe cluster: cluster, cluster.Cluster, cluster.Cluster.CertificateAuthority or cluster.Cluster.Endpoint is nil")
-	}
-	gen, err := token.NewGenerator(true, false)
-	if err != nil {
-		return "", fmt.Errorf("failed to create token generator, %w", err)
-	}
-	opts := &token.GetTokenOptions{
-		ClusterID: clusterId,
-	}
-	token, err := gen.GetWithOptions(opts)
-	if err != nil {
-		return "", fmt.Errorf("failed to get token, %w", err)
-	}
-	ca, err := base64.StdEncoding.DecodeString(*cluster.Cluster.CertificateAuthority.Data)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode certificate authority, %w", err)
-	}
-
-	kubeConfig := generateKubeConfig(*cluster.Cluster.Endpoint, token.Token, ca)
 
 	dirname, err := os.UserHomeDir()
 	if err != nil {
@@ -517,11 +531,42 @@ func (a *awsProvider) WriteKubeConfig(ctx context.Context, clusterId string) (st
 
 	pathToKubeConfig := path.Join(dirname, ".humanitec-setup-wizard", "kubeconfig")
 
-	if err = clientcmd.WriteToFile(kubeConfig, pathToKubeConfig); err != nil {
+	if err = clientcmd.WriteToFile(*kubeConfig, pathToKubeConfig); err != nil {
 		return "", fmt.Errorf("failed to write kubeconfig to file, %w", err)
 	}
 
 	return pathToKubeConfig, nil
+}
+
+func (a *awsProvider) getKubeConfig(ctx context.Context, clusterId string) (*api.Config, error) {
+	eksClient := eks.NewFromConfig(a.awsConfig)
+	cluster, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
+		Name: &clusterId,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe cluster, %w", err)
+	}
+	if cluster == nil || cluster.Cluster == nil || cluster.Cluster.CertificateAuthority == nil || cluster.Cluster.Endpoint == nil {
+		return nil, fmt.Errorf("failed to describe cluster: cluster, cluster.Cluster, cluster.Cluster.CertificateAuthority or cluster.Cluster.Endpoint is nil")
+	}
+	gen, err := token.NewGenerator(true, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token generator, %w", err)
+	}
+	opts := &token.GetTokenOptions{
+		ClusterID: clusterId,
+	}
+	token, err := gen.GetWithOptions(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token, %w", err)
+	}
+	ca, err := base64.StdEncoding.DecodeString(*cluster.Cluster.CertificateAuthority.Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode certificate authority, %w", err)
+	}
+
+	kubeConfig := generateKubeConfig(*cluster.Cluster.Endpoint, token.Token, ca)
+	return &kubeConfig, nil
 }
 
 func (a *awsProvider) ListSecretManagers(ctx context.Context) ([]string, error) {
@@ -776,6 +821,10 @@ func (a *awsProvider) IsSecretStoreRegistered(ctx context.Context) (bool, error)
 	return false, nil
 }
 
+func (a *awsProvider) CleanState(ctx context.Context) error {
+	return nil
+}
+
 func (a *awsProvider) getAccountId(ctx context.Context) (string, error) {
 	stsClient := sts.NewFromConfig(a.awsConfig)
 	caller, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
@@ -850,23 +899,6 @@ func (a *awsProvider) isAccessEntryExists(ctx context.Context, clusterName, prin
 	return true, nil
 }
 
-func (a *awsProvider) isAccessPolicyAlreadyAssociated(ctx context.Context, clusterName, policyArn, principalArn string) (bool, error) {
-	eksClient := eks.NewFromConfig(a.awsConfig)
-	listAccessPoliciesResp, err := eksClient.ListAssociatedAccessPolicies(ctx, &eks.ListAssociatedAccessPoliciesInput{
-		ClusterName:  &clusterName,
-		PrincipalArn: &principalArn,
-	})
-	if err != nil {
-		return false, fmt.Errorf("failed to list associated access policies, %w", err)
-	}
-	for _, accessPolicy := range listAccessPoliciesResp.AssociatedAccessPolicies {
-		if *accessPolicy.PolicyArn == policyArn {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (a *awsProvider) isPodIdentityAssociationExists(ctx context.Context, clusterName, associationId string) (bool, error) {
 	eksClient := eks.NewFromConfig(a.awsConfig)
 	_, err := eksClient.DescribePodIdentityAssociation(ctx, &eks.DescribePodIdentityAssociationInput{
@@ -925,6 +957,13 @@ func generateAwsPolicyName(prefix string) string {
 	return roleName
 }
 
+func generateAwsK8sGroupName(prefix string) string {
+	roleName := fmt.Sprintf("%s-%s", prefix, uuid.New().String())
+	roleName = roleName[:min(len(roleName), 63)]
+	roleName = strings.TrimSuffix(roleName, "-")
+	return roleName
+}
+
 func generateKubeConfig(host, token string, certificate []byte) api.Config {
 	clusters := make(map[string]*api.Cluster)
 	clusters["cluster"] = &api.Cluster{
@@ -953,4 +992,38 @@ func generateKubeConfig(host, token string, certificate []byte) api.Config {
 	}
 
 	return clientConfig
+}
+
+func (a *awsProvider) ensureK8sClient(ctx context.Context, clusterId string) error {
+	if a.k8sClient != nil {
+		return nil
+	}
+
+	kubeConfig, err := a.getKubeConfig(ctx, clusterId)
+	if err != nil {
+		return fmt.Errorf("failed to create kubeconfig: %w", err)
+	}
+
+	rawKubeConfig, err := clientcmd.Write(*kubeConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create kubeconfig: %w", err)
+	}
+
+	clientConfig, err := clientcmd.NewClientConfigFromBytes(rawKubeConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create k8s API client: %w", err)
+	}
+
+	config, err := clientConfig.ClientConfig()
+	if err != nil {
+		return fmt.Errorf("failed to create k8s API client: %w", err)
+	}
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create k8s API client: %w", err)
+	}
+
+	a.k8sClient = client
+	return nil
 }
