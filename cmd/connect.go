@@ -193,6 +193,10 @@ func deployTestApplication(ctx context.Context, humanitecPlatform *platform.Huma
 			return fmt.Errorf("failed to create application: %w", err)
 		}
 	}
+	session.State.Application.Connect.HumanitecApplicationId = applicationId
+	if err := session.Save(); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
 
 	environmentTypeId := "development"
 	environmentId := "development"
