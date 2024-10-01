@@ -888,16 +888,14 @@ func (p *gcpProvider) CleanState(ctx context.Context) error {
 	}
 
 	if wliPoolName := session.State.GCPProvider.CloudIdentity.WorkloadIdentityPoolName; wliPoolName != "" {
-		fullWlName := fmt.Sprintf("projects/%s/locations/global/workloadIdentityPools/%s", projectID, wliPoolName)
-		b, err := message.BoolSelect(fmt.Sprintf("Do you want to delete the Workload Identity Pool '%s'?", fullWlName))
+		message.Info("Workload Identity Pool %s will be deleted: gcloud iam workload-identity-pools delete %s --location=\"global\" --project %s", wliPoolName, wliPoolName, projectID)
+		b, err := message.BoolSelect("Proceed?")
 		if err != nil {
 			return fmt.Errorf("failed to prompt user: %w", err)
 		}
 
 		if b {
-			message.Info("Deleting Workload Identity Pool: gcloud iam workload-identity-pools delete %s --location=\"global\" --project %s",
-				wliPoolName,
-				projectID)
+			fullWlName := fmt.Sprintf("projects/%s/locations/global/workloadIdentityPools/%s", projectID, wliPoolName)
 			if _, err := iamService.Projects.Locations.WorkloadIdentityPools.Delete(fullWlName).Context(ctx).Do(); err != nil {
 				if notFound, parsedErr := isGoogleAPIErrorNotFound(err, fmt.Sprintf("failed to check Workload Identity Pool '%s' existence", wliPoolName)); notFound {
 					message.Info("Workload Identity Pool '%s' already deleted", wliPoolName)
@@ -918,14 +916,13 @@ func (p *gcpProvider) CleanState(ctx context.Context) error {
 
 	if humGCPServiceAccount := session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountName; humGCPServiceAccount != "" {
 		gcpServiceAccountEmail := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", session.State.GCPProvider.CloudIdentity.HumanitecServiceAccountName, projectID)
-		b, err := message.BoolSelect(fmt.Sprintf("Do you want to delete the GCP Service Account '%s'?", gcpServiceAccountEmail))
+		message.Info("GCP Service Account %s will be deleted: gcloud iam service-accounts delete %s", gcpServiceAccountEmail, gcpServiceAccountEmail)
+		b, err := message.BoolSelect("Proceed?")
 		if err != nil {
 			return fmt.Errorf("failed to prompt user: %w", err)
 		}
 
 		if b {
-			message.Info("Deleting GCP Service Account: gcloud iam service-accounts delete %s",
-				gcpServiceAccountEmail)
 			if _, err := iamService.Projects.ServiceAccounts.Delete(fmt.Sprintf("projects/%s/serviceAccounts/%s", projectID, gcpServiceAccountEmail)).Context(ctx).Do(); err != nil {
 				if notFound, parsedErr := isGoogleAPIErrorNotFound(err, fmt.Sprintf("failed to delete GCP Service Account '%s'", gcpServiceAccountEmail)); notFound {
 					message.Info("GCP Service Account '%s' already deleted", gcpServiceAccountEmail)
@@ -945,15 +942,14 @@ func (p *gcpProvider) CleanState(ctx context.Context) error {
 	}
 
 	if gkeAccessIAMCustomRole := session.State.GCPProvider.ConnectCluster.IAMCustomRoleName; gkeAccessIAMCustomRole != "" {
-		gkeAccessIAMCustomRoleFullName := fmt.Sprintf("projects/%s/roles/%s", projectID, gkeAccessIAMCustomRole)
-		b, err := message.BoolSelect(fmt.Sprintf("Do you want to delete the IAM Custom Role '%s'?", gkeAccessIAMCustomRoleFullName))
+		message.Info("IAM Custom Role %s will be deleted: gcloud iam role delete %s --project %s", gkeAccessIAMCustomRole, gkeAccessIAMCustomRole, projectID)
+		b, err := message.BoolSelect("Proceed?")
 		if err != nil {
 			return fmt.Errorf("failed to prompt user: %w", err)
 		}
 
 		if b {
-			message.Info("Deleting IAM Custom Role: gcloud iam role delete %s --project %s",
-				gkeAccessIAMCustomRole, projectID)
+			gkeAccessIAMCustomRoleFullName := fmt.Sprintf("projects/%s/roles/%s", projectID, gkeAccessIAMCustomRole)
 			if _, err := iamService.Projects.Roles.Delete(gkeAccessIAMCustomRoleFullName).Context(ctx).Do(); err != nil {
 				if notFound, parsedErr := isGoogleGRPCErrorNotFound(err, fmt.Sprintf("failed to delete IAM Custom Role '%s'", gkeAccessIAMCustomRole)); notFound {
 					message.Info("IAM Custom Role '%s' already deleted", gkeAccessIAMCustomRole)
@@ -972,13 +968,14 @@ func (p *gcpProvider) CleanState(ctx context.Context) error {
 	}
 
 	if secretManagerAccessIAMCustomRole := session.State.GCPProvider.ConfigureOperatorAccess.IAMRoleSecretManager; secretManagerAccessIAMCustomRole != "" {
-		secretManagerAccessIAMCustomRoleFullName := fmt.Sprintf("projects/%s/roles/%s", projectID, secretManagerAccessIAMCustomRole)
-		b, err := message.BoolSelect(fmt.Sprintf("Do you want to delete the IAM Custom Role '%s'?", secretManagerAccessIAMCustomRoleFullName))
+		message.Info("IAM Custom Role %s will be deleted: gcloud iam role delete %s --project %s", secretManagerAccessIAMCustomRole, secretManagerAccessIAMCustomRole, projectID)
+		b, err := message.BoolSelect("Proceed?")
 		if err != nil {
 			return fmt.Errorf("failed to prompt user: %w", err)
 		}
 
 		if b {
+			secretManagerAccessIAMCustomRoleFullName := fmt.Sprintf("projects/%s/roles/%s", projectID, secretManagerAccessIAMCustomRole)
 			message.Info("Deleting IAM Custom Role: gcloud iam role delete %s --project %s",
 				secretManagerAccessIAMCustomRole, projectID)
 			if _, err := iamService.Projects.Roles.Delete(secretManagerAccessIAMCustomRoleFullName).Context(ctx).Do(); err != nil {
@@ -999,7 +996,8 @@ func (p *gcpProvider) CleanState(ctx context.Context) error {
 	}
 
 	message.Info("There are no more GCP resources stored in the wizard state file to delete in the project '%s'", projectID)
-	b, err := message.BoolSelect("Do you want to reset project ID in the wizard state file?")
+
+	b, err := message.BoolSelect("Project ID in the wizard state file will be reset. Proceed?")
 	if err != nil {
 		return fmt.Errorf("failed to prompt user: %w", err)
 	}

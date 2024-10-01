@@ -2,8 +2,8 @@ package cloud
 
 import (
 	"context"
-	"errors"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -23,14 +23,14 @@ import (
 	"github.com/aws/smithy-go/logging"
 	"github.com/google/uuid"
 	"github.com/humanitec/humanitec-go-autogen/client"
+	v1 "k8s.io/api/core/v1"
 	k8s_rbac "k8s.io/api/rbac/v1"
+	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	k8s_meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
-	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/humanitec/humctl-wizard/internal/cluster"
 	"github.com/humanitec/humctl-wizard/internal/message"
@@ -44,7 +44,7 @@ import (
 type awsProvider struct {
 	awsConfig         aws.Config
 	humanitecPlatform *platform.HumanitecPlatform
-	k8sClient   *kubernetes.Clientset
+	k8sClient         *kubernetes.Clientset
 }
 
 var humanitecOperatorServiceAccount = "humanitec-operator-controller-manager"
@@ -262,7 +262,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 	if err != nil {
 		return "", fmt.Errorf("failed to ensure k8s client, %w", err)
 	}
-	
+
 	eksClient := eks.NewFromConfig(a.awsConfig)
 	clusterResp, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
 		Name: &clusterId,
@@ -822,6 +822,263 @@ func (a *awsProvider) IsSecretStoreRegistered(ctx context.Context) (bool, error)
 }
 
 func (a *awsProvider) CleanState(ctx context.Context) error {
+	eksClient := eks.NewFromConfig(a.awsConfig)
+	iamClient := iam.NewFromConfig(a.awsConfig)
+	clusterId := session.State.Application.Connect.CloudClusterId
+
+	if session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId != "" {
+		isPodIdentityAssociationCreated, err := a.isPodIdentityAssociationExists(ctx, clusterId, session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
+		if err != nil {
+			return fmt.Errorf("failed to check if pod identity association exists, %w", err)
+		}
+		if !isPodIdentityAssociationCreated {
+			message.Debug("Pod identity association not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
+			session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		} else {
+			message.Info("Pod identity association will be deleted: aws eks delete-pod-identity-association --cluster-name %s --association-id %s", clusterId, session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
+			answer, err := message.BoolSelect("Proceed?")
+			if err != nil {
+				return fmt.Errorf("failed to select answer, %w", err)
+			}
+			if answer {
+				_, err = eksClient.DeletePodIdentityAssociation(ctx, &eks.DeletePodIdentityAssociationInput{
+					AssociationId: &session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId,
+					ClusterName:   &clusterId,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to delete pod identity association, %w", err)
+				}
+				message.Info("Pod identity association deleted: %s", session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
+				session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId = ""
+				if err = session.Save(); err != nil {
+					return fmt.Errorf("failed to save state: %w", err)
+				}
+			} else {
+				message.Info("Skipping deletion of the pod identity association: %s", session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
+			}
+		}
+
+	}
+
+	isAccessSecretPolicyAttached, err := a.isPolicyAttachedToRole(ctx, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
+	if err != nil {
+		return fmt.Errorf("failed to check if policy is attached to role, %w", err)
+	}
+	if isAccessSecretPolicyAttached {
+		message.Info("Policy will be detached from role: aws iam detach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
+		answer, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to select answer, %w", err)
+		}
+		if answer {
+			_, err = iamClient.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{
+				PolicyArn: &session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN,
+				RoleName:  &session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to detach role policy, %w", err)
+			}
+			message.Info("Policy %s detached from role %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+		} else {
+			message.Info("Skipping detachment of the policy %s from role %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+		}
+	}
+
+	if session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName != "" {
+		isTrustPolicyRoleCreated, err := a.isRoleExists(ctx, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+		if err != nil {
+			return fmt.Errorf("failed to check if role exists, %w", err)
+		}
+		if !isTrustPolicyRoleCreated {
+			message.Debug("Trust policy role not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+			session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName = ""
+			session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleARN = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		} else {
+			message.Info("Trust policy role will be deleted: aws iam delete-role --role-name %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+			answer, err := message.BoolSelect("Proceed?")
+			if err != nil {
+				return fmt.Errorf("failed to select answer, %w", err)
+			}
+			if answer {
+				_, err = iamClient.DeleteRole(ctx, &iam.DeleteRoleInput{
+					RoleName: &session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to delete role, %w", err)
+				}
+				message.Info("Trust policy role deleted: %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+				session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName = ""
+				session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleARN = ""
+				if err = session.Save(); err != nil {
+					return fmt.Errorf("failed to save state: %w", err)
+				}
+			} else {
+				message.Info("Skipping deletion of the trust policy role: %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+			}
+		}
+	}
+
+	if session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN != "" {
+		isAccessSecretsManagerPolicyCreated, err := a.isPolicyExists(ctx, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
+		if err != nil {
+			return fmt.Errorf("failed to check if policy exists, %w", err)
+		}
+		if !isAccessSecretsManagerPolicyCreated {
+			message.Debug("Secret access policy not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName)
+			session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName = ""
+			session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		} else {
+			message.Info("Access policy will be deleted: aws iam delete-policy --policy-arn %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
+			answer, err := message.BoolSelect("Proceed?")
+			if err != nil {
+				return fmt.Errorf("failed to select answer, %w", err)
+			}
+			if answer {
+				_, err = iamClient.DeletePolicy(ctx, &iam.DeletePolicyInput{
+					PolicyArn: &session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to delete policy, %w", err)
+				}
+				message.Info("Access policy deleted: %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName)
+				session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName = ""
+				session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN = ""
+				if err = session.Save(); err != nil {
+					return fmt.Errorf("failed to save state: %w", err)
+				}
+			} else {
+				message.Info("Skipping deletion of the access policy: %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName)
+			}
+		}
+	}
+
+	isAccessEntryCreated, err := a.isAccessEntryExists(ctx, clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+	if err != nil {
+		return fmt.Errorf("failed to check if access entry exists, %w", err)
+	}
+	if isAccessEntryCreated {
+		message.Info("Access entry will be deleted: aws eks delete-access-entry --cluster-name %s --principal-arn %s", clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+		answer, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to select answer, %w", err)
+		}
+		if answer {
+			_, err = eksClient.DeleteAccessEntry(ctx, &eks.DeleteAccessEntryInput{
+				ClusterName:  &clusterId,
+				PrincipalArn: &session.State.AwsProvider.CreateCloudIdentity.RoleArn,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to delete access entry, %w", err)
+			}
+			message.Info("Access Entry to cluster %s deleted for %s", clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+		} else {
+			message.Info("Skipping deletion of the access entry: %s", session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+		}
+	}
+
+	isPolicyAttached, err := a.isPolicyAttachedToRole(ctx, session.State.AwsProvider.CreateCloudIdentity.RoleName, session.State.AwsProvider.ConnectCluster.PolicyArn)
+	if err != nil {
+		return fmt.Errorf("failed to check if policy is attached to role, %w", err)
+	}
+	if isPolicyAttached {
+		message.Info("Policy will be detached from role: aws iam detach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.CreateCloudIdentity.RoleName, session.State.AwsProvider.ConnectCluster.PolicyArn)
+		answer, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to select answer, %w", err)
+		}
+		if answer {
+			_, err = iamClient.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{
+				PolicyArn: &session.State.AwsProvider.ConnectCluster.PolicyArn,
+				RoleName:  &session.State.AwsProvider.CreateCloudIdentity.RoleName,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to detach role policy, %w", err)
+			}
+			message.Info("Policy %s detached from role %s", session.State.AwsProvider.ConnectCluster.PolicyName, session.State.AwsProvider.CreateCloudIdentity.RoleName)
+		} else {
+			message.Info("Skipping detachment of the policy %s from role %s", session.State.AwsProvider.ConnectCluster.PolicyName, session.State.AwsProvider.CreateCloudIdentity.RoleName)
+		}
+	}
+
+	if session.State.AwsProvider.CreateCloudIdentity.RoleName != "" {
+		isRoleExists, err := a.isRoleExists(ctx, session.State.AwsProvider.CreateCloudIdentity.RoleName)
+		if err != nil {
+			return fmt.Errorf("failed to check if role exists, %w", err)
+		}
+		if !isRoleExists {
+			message.Debug("AWS Role not found: %s, clearing state", session.State.AwsProvider.CreateCloudIdentity.RoleName)
+			session.State.AwsProvider.CreateCloudIdentity.RoleName = ""
+			if err := session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		} else {
+			message.Info("Role will be deleted: aws iam delete-role --role-name %s", session.State.AwsProvider.CreateCloudIdentity.RoleName)
+			answer, err := message.BoolSelect("Proceed?")
+			if err != nil {
+				return fmt.Errorf("failed to select answer, %w", err)
+			}
+			if answer {
+				_, err = iamClient.DeleteRole(ctx, &iam.DeleteRoleInput{
+					RoleName: &session.State.AwsProvider.CreateCloudIdentity.RoleName,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to delete role, %w", err)
+				}
+				message.Info("AWS Role deleted: %s", session.State.AwsProvider.CreateCloudIdentity.RoleName)
+				session.State.AwsProvider.CreateCloudIdentity.RoleName = ""
+				if err := session.Save(); err != nil {
+					return fmt.Errorf("failed to save state: %w", err)
+				}
+			} else {
+				message.Info("Skipping deletion of the role: %s", session.State.AwsProvider.CreateCloudIdentity.RoleName)
+			}
+		}
+	}
+
+	if session.State.AwsProvider.ConnectCluster.PolicyArn != "" {
+		isPolicyExists, err := a.isPolicyExists(ctx, session.State.AwsProvider.ConnectCluster.PolicyArn)
+		if err != nil {
+			return fmt.Errorf("failed to check if policy exists, %w", err)
+		}
+		if !isPolicyExists {
+			message.Debug("AWS Policy not found: %s, clearing state", session.State.AwsProvider.ConnectCluster.PolicyArn)
+			session.State.AwsProvider.ConnectCluster.PolicyArn = ""
+			if err := session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		} else {
+			message.Info("Policy will be deleted: aws iam delete-policy --policy-arn %s", session.State.AwsProvider.ConnectCluster.PolicyArn)
+			answer, err := message.BoolSelect("Proceed?")
+			if err != nil {
+				return fmt.Errorf("failed to select answer, %w", err)
+			}
+			if answer {
+				_, err = iamClient.DeletePolicy(ctx, &iam.DeletePolicyInput{
+					PolicyArn: &session.State.AwsProvider.ConnectCluster.PolicyArn,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to delete policy, %w", err)
+				}
+				message.Info("AWS Policy deleted: %s", session.State.AwsProvider.ConnectCluster.PolicyArn)
+				session.State.AwsProvider.ConnectCluster.PolicyArn = ""
+				if err := session.Save(); err != nil {
+					return fmt.Errorf("failed to save state: %w", err)
+				}
+			} else {
+				message.Info("Skipping deletion of the policy: %s", session.State.AwsProvider.ConnectCluster.PolicyArn)
+			}
+		}
+	}
+
 	return nil
 }
 

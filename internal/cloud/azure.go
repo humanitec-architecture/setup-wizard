@@ -734,6 +734,12 @@ func (p *azureProvider) ConfigureOperator(ctx context.Context, platform *platfor
 	if err != nil {
 		return fmt.Errorf("failed to register secret store, %w", err)
 	}
+
+	err = cluster.RestartOperatorDeployment(ctx, kubeconfig, operatorNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to restart operator deployment, %w", err)
+	}
+
 	message.Info("SecretStore configuration applied to the cluster")
 
 	return nil
@@ -751,80 +757,69 @@ func (p *azureProvider) IsSecretStoreRegistered(ctx context.Context) (bool, erro
 }
 
 func (p *azureProvider) CleanState(ctx context.Context) error {
-
-	toDelete := make([]string, 0)
-	if session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName != "" {
-		toDelete = append(toDelete, "Managed Identity "+session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName)
-	}
-	if session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName != "" {
-		toDelete = append(toDelete, "Managed Identity "+session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName)
-	}
-	if session.State.AzureProvider.ConnectCluster.EntraIDGroupId != "" {
-		toDelete = append(toDelete, "Managed Identity "+session.State.AzureProvider.ConnectCluster.EntraIDGroupId)
-	}
-	if len(toDelete) == 0 {
-		return nil
-	}
-
-	message.Info("The following resources will be removed from Azure:")
-	for _, msg := range toDelete {
-		message.Info("- %s", msg)
-	}
-	proceed, err := message.BoolSelect("Proceed?")
-	if err != nil {
-		return fmt.Errorf("failed to get user input: %w", err)
-	}
-	if !proceed {
-		return nil
-	}
-
 	idClient, err := armmsi.NewUserAssignedIdentitiesClient(session.State.AzureProvider.SubscriptionID, p.credential, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create Managed Identity client, %w", err)
 	}
 
 	if session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName != "" {
-		message.Info("Deleting Managed Identity: az identity delete --name %s --resource-group %s",
+		message.Info("Managed Identity will be deleted: az identity delete --name %s --resource-group %s",
 			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName, session.State.AzureProvider.ResourceGroup)
-		if _, err := idClient.Delete(ctx,
-			session.State.AzureProvider.ResourceGroup,
-			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName,
-			nil); err != nil {
-			var respErr *azcore.ResponseError
-			if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
-				message.Info("The resource doesn't exist or has been already removed")
-			} else {
-				return fmt.Errorf("failed to delete Managed Identity %s, %w", session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName, err)
+		proceed, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to get user input: %w", err)
+		}
+		if proceed {
+			if _, err := idClient.Delete(ctx,
+				session.State.AzureProvider.ResourceGroup,
+				session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName,
+				nil); err != nil {
+				var respErr *azcore.ResponseError
+				if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+					message.Info("The resource doesn't exist or has been already removed")
+				} else {
+					return fmt.Errorf("failed to delete Managed Identity %s, %w", session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName, err)
+				}
+			}
+			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName = ""
+			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityClientId = ""
+			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityPrincipalId = ""
+			session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityTenantId = ""
+			session.State.AzureProvider.CreateCloudIdentity.FederatedCredentialsName = ""
+			session.State.AzureProvider.CreateCloudIdentity.HumanitecCloudAccountId = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
 			}
 		}
-	}
-	session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName = ""
-	session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityClientId = ""
-	session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityPrincipalId = ""
-	if err = session.Save(); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
 	}
 
 	if session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName != "" {
-		message.Info("Deleting Managed Identity: az identity delete --name %s --resource-group %s",
+		message.Info("Managed Identity will be deleted: az identity delete --name %s --resource-group %s",
 			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName, session.State.AzureProvider.ResourceGroup)
-		if _, err := idClient.Delete(ctx,
-			session.State.AzureProvider.ResourceGroup,
-			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName,
-			nil); err != nil {
-			var respErr *azcore.ResponseError
-			if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
-				message.Info("The resource doesn't exist or has been already removed")
-			} else {
-				return fmt.Errorf("failed to delete Managed Identity %s, %w", session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName, err)
+		proceed, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to get user input: %w", err)
+		}
+		if proceed {
+			if _, err := idClient.Delete(ctx,
+				session.State.AzureProvider.ResourceGroup,
+				session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName,
+				nil); err != nil {
+				var respErr *azcore.ResponseError
+				if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+					message.Info("The resource doesn't exist or has been already removed")
+				} else {
+					return fmt.Errorf("failed to delete Managed Identity %s, %w", session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName, err)
+				}
+			}
+			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName = ""
+			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityClientId = ""
+			session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId = ""
+			session.State.AzureProvider.ConfigureOperatorAccess.FederatedCredentialsName = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
 			}
 		}
-	}
-	session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName = ""
-	session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityClientId = ""
-	session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId = ""
-	if err = session.Save(); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
 	}
 
 	grClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(p.credential, []string{"https://graph.microsoft.com/.default"})
@@ -833,19 +828,25 @@ func (p *azureProvider) CleanState(ctx context.Context) error {
 	}
 
 	if session.State.AzureProvider.ConnectCluster.EntraIDGroupId != "" {
-		message.Info("Deleting Entra ID security group: az ad group delete --group %s", session.State.AzureProvider.ConnectCluster.EntraIDGroupId)
-		if err = grClient.Groups().ByGroupId(session.State.AzureProvider.ConnectCluster.EntraIDGroupId).Delete(ctx, nil); err != nil {
-			if strings.Contains(err.Error(), "does not exist") {
-				message.Info("The resource doesn't exist or has been already removed")
-			} else {
-				return fmt.Errorf("failed to delete Entra ID group, %w", err)
+		message.Info("Entra ID security group will be deleted: az ad group delete --group %s", session.State.AzureProvider.ConnectCluster.EntraIDGroupId)
+		proceed, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to get user input: %w", err)
+		}
+		if proceed {
+			if err = grClient.Groups().ByGroupId(session.State.AzureProvider.ConnectCluster.EntraIDGroupId).Delete(ctx, nil); err != nil {
+				if strings.Contains(err.Error(), "does not exist") {
+					message.Info("The resource doesn't exist or has been already removed")
+				} else {
+					return fmt.Errorf("failed to delete Entra ID group, %w", err)
+				}
+			}
+			session.State.AzureProvider.ConnectCluster.EntraIDGroupId = ""
+			session.State.AzureProvider.ConnectCluster.EntraIDGroupName = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
 			}
 		}
-	}
-	session.State.AzureProvider.ConnectCluster.EntraIDGroupId = ""
-	session.State.AzureProvider.ConnectCluster.EntraIDGroupName = ""
-	if err = session.Save(); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
 	}
 
 	return nil

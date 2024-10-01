@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	agentReleaseName = "humanitec-agent"
-	agentNamespace   = "humanitec-agent"
+	AgentReleaseName = "humanitec-agent"
+	AgentNamespace   = "humanitec-agent"
 )
 
 func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, error) {
@@ -30,7 +30,7 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 	}
 
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", agentNamespace), agentNamespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
+	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", AgentNamespace), AgentNamespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
 		message.Debug(format, args...)
 	}); err != nil {
 		return "", err
@@ -67,12 +67,12 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 
 	if !ifInstalled {
 		message.Info("Installing the agent with Helm: helm install %s oci://ghcr.io/humanitec/charts/humanitec-agent --namespace %s --create-namespace",
-			agentReleaseName, agentNamespace)
+			AgentReleaseName, AgentNamespace)
 		client := action.NewInstall(actionConfig)
 		client.Wait = true
 		client.CreateNamespace = true
-		client.ReleaseName = agentReleaseName
-		client.Namespace = agentNamespace
+		client.ReleaseName = AgentReleaseName
+		client.Namespace = AgentNamespace
 		client.Timeout = 5 * time.Minute
 
 		release, err = client.Run(chart, map[string]interface{}{
@@ -86,14 +86,14 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 		}
 	} else {
 		message.Info("Upgrading the agent with Helm: helm upgrade %s oci://ghcr.io/humanitec/charts/humanitec-agent --namespace %s",
-			agentReleaseName, agentNamespace)
+			AgentReleaseName, AgentNamespace)
 		client := action.NewUpgrade(actionConfig)
 		client.Wait = true
 		client.Wait = true
-		client.Namespace = agentNamespace
+		client.Namespace = AgentNamespace
 		client.Timeout = 5 * time.Minute
 
-		release, err = client.Run(agentReleaseName, chart, map[string]interface{}{
+		release, err = client.Run(AgentReleaseName, chart, map[string]interface{}{
 			"humanitec": map[string]any{
 				"org":        humanitecOrg,
 				"privateKey": privateKey,
@@ -109,7 +109,7 @@ func InstallAgent(humanitecOrg, privateKey, kubeConfigPath string) (string, erro
 
 func IsAgentInstalled(kubeConfigPath string) (bool, error) {
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", agentNamespace), agentNamespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
+	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", AgentNamespace), AgentNamespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
 		message.Debug(format, args...)
 	}); err != nil {
 		return false, fmt.Errorf("failed to initialize helm action configuration: %w", err)
@@ -118,7 +118,7 @@ func IsAgentInstalled(kubeConfigPath string) (bool, error) {
 	histClient := action.NewHistory(actionConfig)
 	histClient.Max = 1
 
-	_, err := histClient.Run(agentReleaseName)
+	_, err := histClient.Run(AgentReleaseName)
 	if err != nil {
 		if err == driver.ErrReleaseNotFound {
 			return false, nil
@@ -126,4 +126,8 @@ func IsAgentInstalled(kubeConfigPath string) (bool, error) {
 		return false, fmt.Errorf("failed to get history: %w", err)
 	}
 	return true, nil
+}
+
+func UninstallAgent(kubeConfigPath string) error {
+	return UninstallChart(kubeConfigPath, AgentReleaseName, AgentNamespace)
 }

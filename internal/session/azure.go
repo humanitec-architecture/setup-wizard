@@ -21,8 +21,8 @@ type AzureProviderSession struct {
 	ConfigureOperatorAccess struct {
 		SecretStoreId              string `json:"secretStoreId"`
 		ManagedIdentityName        string `json:"managedIdentityName"`
-		ManagedIdentityClientId    string `json:"managedIdentityId"`
-		ManagedIdentityPrincipalId string `json:"managedPrincipalId"`
+		ManagedIdentityClientId    string `json:"managedIdentityClientId"`
+		ManagedIdentityPrincipalId string `json:"managedIdentityPrincipalId"`
 		FederatedCredentialsName   string `json:"federatedCredentialsName"`
 	}
 }

@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	operatorReleaseName = "humanitec-operator"
+	OperatorReleaseName = "humanitec-operator"
 )
 
 func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]interface{}) (string, error) {
@@ -73,7 +73,7 @@ func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]
 	}
 
 	var release *release.Release
-	ifInstalled, err := isOperatorInstalled(kubeConfigPath, namespace)
+	ifInstalled, err := IsOperatorInstalled(kubeConfigPath, namespace)
 	if err != nil {
 		return "", fmt.Errorf("failed to check if operator is installed: %w", err)
 	}
@@ -83,11 +83,11 @@ func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]
 	}
 	if !ifInstalled {
 		message.Info("Installing the operator with Helm: helm install %s oci://ghcr.io/humanitec/charts/humanitec-operator --namespace %s --create-namespace",
-			operatorReleaseName, namespace)
+			OperatorReleaseName, namespace)
 		client := action.NewInstall(actionConfig)
 		client.Wait = true
 		client.CreateNamespace = true
-		client.ReleaseName = operatorReleaseName
+		client.ReleaseName = OperatorReleaseName
 		client.Namespace = namespace
 		client.Timeout = 5 * time.Minute
 
@@ -97,14 +97,14 @@ func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]
 		}
 	} else {
 		message.Info("Upgrading the operator with Helm: helm upgrade %s oci://ghcr.io/humanitec/charts/humanitec-operator --namespace %s",
-			operatorReleaseName, namespace)
+			OperatorReleaseName, namespace)
 		client := action.NewUpgrade(actionConfig)
 		client.Wait = true
 		client.Wait = true
 		client.Namespace = namespace
 		client.Timeout = 5 * time.Minute
 
-		release, err = client.Run(operatorReleaseName, chart, values)
+		release, err = client.Run(OperatorReleaseName, chart, values)
 		if err != nil {
 			return "", fmt.Errorf("failed to upgrade operator: %w", err)
 		}
@@ -113,7 +113,7 @@ func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]
 	return fmt.Sprintf("%s - %d", release.Name, release.Version), nil
 }
 
-func isOperatorInstalled(kubeConfigPath, namespace string) (bool, error) {
+func IsOperatorInstalled(kubeConfigPath, namespace string) (bool, error) {
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(kube.GetConfig(kubeConfigPath, "", namespace), namespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {
 		message.Debug(format, args...)
@@ -124,7 +124,7 @@ func isOperatorInstalled(kubeConfigPath, namespace string) (bool, error) {
 	histClient := action.NewHistory(actionConfig)
 	histClient.Max = 1
 
-	_, err := histClient.Run(operatorReleaseName)
+	_, err := histClient.Run(OperatorReleaseName)
 	if err != nil {
 		if err == driver.ErrReleaseNotFound {
 			return false, nil
@@ -132,6 +132,10 @@ func isOperatorInstalled(kubeConfigPath, namespace string) (bool, error) {
 		return false, fmt.Errorf("failed to get history: %w", err)
 	}
 	return true, nil
+}
+
+func UninstallOperator(kubeConfigPath, namespace string) error {
+	return UninstallChart(kubeConfigPath, OperatorReleaseName, namespace)
 }
 
 func RestartOperatorDeployment(ctx context.Context, kubeConfigPath, namespace string) error {
@@ -183,7 +187,7 @@ func ApplySecretStore(ctx context.Context, kubeconfig, namespace, secretsStoreId
 }
 
 func ConfigureDriverAuth(ctx context.Context, kubeconfig, namespace string, platform *platform.HumanitecPlatform) error {
-	if session.State.Application.Connect.DriverAuthConfigured {
+	if session.State.Application.Connect.DriverAuthKey != "" {
 		useExisting, err := message.BoolSelect("The operator already configured to authenticate Humanitec drivers. Would you like to use the existing configuration?")
 		if err != nil {
 			return fmt.Errorf("failed to select an option: %w", err)
@@ -198,6 +202,19 @@ func ConfigureDriverAuth(ctx context.Context, kubeconfig, namespace string, plat
 		}
 		if !proceed {
 			return nil
+		}
+	}
+
+	if session.State.Application.Connect.DriverAuthKey != "" {
+		// Delete old key
+		resp, err := platform.Client.DeletePublicKeyWithResponse(ctx,
+			session.State.Application.Connect.HumanitecOrganizationId,
+			session.State.Application.Connect.DriverAuthKey)
+		if err != nil {
+			return fmt.Errorf("failed to delete old public key: %w", err)
+		}
+		if resp.StatusCode() != http.StatusNoContent && resp.StatusCode() != http.StatusNotFound {
+			return fmt.Errorf("failed to delete public key, status code: %d", resp.StatusCode())
 		}
 	}
 
@@ -235,8 +252,10 @@ func ConfigureDriverAuth(ctx context.Context, kubeconfig, namespace string, plat
 	if resp.StatusCode() != http.StatusOK {
 		return fmt.Errorf("failed to register public key, status code: %s", resp.Status())
 	}
-
-	session.State.Application.Connect.DriverAuthConfigured = true
+	if resp.JSON200 == nil {
+		return fmt.Errorf("failed to register public key, invalid response body: %s", string(resp.Body))
+	}
+	session.State.Application.Connect.DriverAuthKey = resp.JSON200.Id
 	if err := session.Save(); err != nil {
 		return fmt.Errorf("failed to save session: %w", err)
 	}

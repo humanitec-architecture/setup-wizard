@@ -12,10 +12,10 @@ type ConnectSession struct {
 	CloudLoadBalancerId     string            `json:"cloudLoadBalancerId"`
 	HumanitecClusterId      string            `json:"humanitecClusterId"`
 	DoInstallAgent          *bool             `json:"doInstallAgent"`
-	DoInstallOperator       *bool             `json:"doInstallOperator"`
 	OperatorNamespace       string            `json:"operatorNamespace"`
 	CloudSecretManagerId    string            `json:"cloudSecretManagerId"`
 	HumanitecSecretStoreId  string            `json:"humanitecSecretStoreId"`
 	LoadBalancers           map[string]string `json:"loadBalancers"`
-	DriverAuthConfigured    bool              `json:"driverAuthConfigured"`
+	DriverAuthKey           string            `json:"driverAuthKey"`
+	HumanitecApplicationId  string            `json:"humanitecApplicationId"`
 }
