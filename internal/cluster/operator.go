@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/humanitec/humctl-wizard/internal/keys"
 	"net/http"
 	"os"
 	"path"
 	"time"
+
+	"github.com/humanitec/humctl-wizard/internal/keys"
 
 	"github.com/humanitec/humctl-wizard/internal/message"
 	"github.com/humanitec/humctl-wizard/internal/platform"
@@ -193,14 +194,6 @@ func ConfigureDriverAuth(ctx context.Context, kubeconfig, namespace string, plat
 			return fmt.Errorf("failed to select an option: %w", err)
 		}
 		if useExisting {
-			return nil
-		}
-	} else {
-		proceed, err := message.BoolSelect("Would you like to configure the operator to authenticate Humanitec drivers?")
-		if err != nil {
-			return fmt.Errorf("failed to select an option: %w", err)
-		}
-		if !proceed {
 			return nil
 		}
 	}

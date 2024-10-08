@@ -10,4 +10,7 @@ service:
     web:
       port: 8080
       targetPort: 80
+resources:
+  my-s3:
+    type: s3
 

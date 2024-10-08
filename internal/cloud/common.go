@@ -106,7 +106,12 @@ func ensurek8sClusterRole(ctx context.Context, k8sClient *kubernetes.Clientset, 
 			{
 				APIGroups: []string{"batch"},
 				Resources: []string{"jobs"},
-				Verbs:     []string{"get", "list"},
+				Verbs:     []string{"create", "get", "list", "delete"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"secrets"},
+				Verbs:     []string{"create", "get", "delete", "list", "update", "deletecollection"},
 			},
 			{
 				APIGroups: []string{"apps"},

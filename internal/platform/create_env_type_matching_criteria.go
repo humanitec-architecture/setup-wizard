@@ -8,8 +8,8 @@ import (
 	"github.com/humanitec/humctl-wizard/internal/message"
 )
 
-func (p *HumanitecPlatform) CreateEnvTypeMatchingCriteria(ctx context.Context, environmentTypeId, resourceId string) error {
-	resDef, err := p.Client.GetResourceDefinitionWithResponse(ctx, p.OrganizationId, resourceId, nil)
+func (p *HumanitecPlatform) CreateEnvTypeAndResIdMatchingCriteria(ctx context.Context, environmentTypeId, defId, resId string) error {
+	resDef, err := p.Client.GetResourceDefinitionWithResponse(ctx, p.OrganizationId, defId, nil)
 	if err != nil {
 		return fmt.Errorf("error fetching resource definition: %w", err)
 	}
@@ -19,15 +19,16 @@ func (p *HumanitecPlatform) CreateEnvTypeMatchingCriteria(ctx context.Context, e
 	if resDef.JSON200.Criteria != nil {
 		for _, criteria := range *resDef.JSON200.Criteria {
 			if criteria.EnvType != nil && *criteria.EnvType == environmentTypeId &&
-				criteria.EnvId == nil && criteria.AppId == nil && criteria.ResId == nil && criteria.Class == "default" {
+				criteria.EnvId == nil && criteria.AppId == nil && (criteria.ResId == nil || *criteria.ResId == resId) && criteria.Class == "default" {
 				message.Debug("Matching criteria already exist")
 				return nil
 			}
 		}
 	}
 
-	createMatchingCriteriaResp, err := p.Client.CreateResourceDefinitionCriteriaWithResponse(ctx, p.OrganizationId, resourceId, client.MatchingCriteriaRuleRequest{
+	createMatchingCriteriaResp, err := p.Client.CreateResourceDefinitionCriteriaWithResponse(ctx, p.OrganizationId, defId, client.MatchingCriteriaRuleRequest{
 		EnvType: &environmentTypeId,
+		ResId:   &resId,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create matching criteria: %w", err)
