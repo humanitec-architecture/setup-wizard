@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -11,8 +12,8 @@ import (
 	"github.com/humanitec/humctl-wizard/internal/platform"
 	"github.com/humanitec/humctl-wizard/internal/session"
 	"github.com/spf13/cobra"
-	k8s_apierrors "k8s.io/apimachinery/pkg/api/errors"
-	k8s_meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -154,6 +155,40 @@ func deleteHumanitecResources(ctx context.Context, humanitecPlatform *platform.H
 		}
 	}
 
+	if tfRunnerDriverDefId := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId; tfRunnerDriverDefId != "" {
+		message.Info("Humanitec Resource Definition (humanitec/terraform-runner) will be deleted: %s", tfRunnerDriverDefId)
+		proceed, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to get user input: %w", err)
+		}
+		if proceed {
+			if err = deleteResourceDefinition(ctx, humanitecPlatform, tfRunnerDriverDefId); err != nil {
+				return err
+			}
+			session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		}
+	}
+
+	if configRunnerDefId := session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId; configRunnerDefId != "" {
+		message.Info("Humanitec Resource Definition (echo config runner) will be deleted: %s", configRunnerDefId)
+		proceed, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to get user input: %w", err)
+		}
+		if proceed {
+			if err = deleteResourceDefinition(ctx, humanitecPlatform, configRunnerDefId); err != nil {
+				return err
+			}
+			session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		}
+	}
+
 	if session.State.Application.Connect.HumanitecCloudAccountId != "" {
 		message.Info("Humanitec Cloud Account will be deleted: %s", session.State.Application.Connect.HumanitecCloudAccountId)
 		proceed, err := message.BoolSelect("Proceed?")
@@ -255,6 +290,79 @@ func deleteK8sResources(ctx context.Context, kubeConfigPath string) error {
 		}
 	}
 
+	terraformRunnerNamespace := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerNamespace
+	if terraformRunnerNamespace != "" {
+		if terraformRunnerServiceAccount := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sServiceAccount; terraformRunnerServiceAccount != "" {
+			message.Info("Terraform runner service account '%s' will be deleted from K8s cluster namespace '%s'", terraformRunnerServiceAccount, terraformRunnerNamespace)
+			proceed, err := message.BoolSelect("Proceed?")
+			if err != nil {
+				return fmt.Errorf("failed to get user input: %w", err)
+			}
+			if proceed {
+				if err = clientset.CoreV1().ServiceAccounts(terraformRunnerNamespace).Delete(ctx, terraformRunnerServiceAccount, metav1.DeleteOptions{}); err != nil {
+					var sErr *kerrors.StatusError
+					if errors.As(err, &sErr) && sErr.ErrStatus.Code == 404 {
+						message.Info("k8s service account '%s' already deleted", terraformRunnerServiceAccount)
+					} else {
+						return fmt.Errorf("failed to delete k8s service account '%s': %w", terraformRunnerServiceAccount, err)
+					}
+				} else {
+					message.Debug("k8s service account '%s' deleted", terraformRunnerServiceAccount)
+				}
+				session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sServiceAccount = ""
+				if err = session.Save(); err != nil {
+					return fmt.Errorf("failed to save state: %w", err)
+				}
+			}
+		}
+
+		if k8sTerraformRunnerRole := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sRole; k8sTerraformRunnerRole != "" {
+			message.Info("Terraform runner k8s role '%s' will be deleted from K8s cluster namespace '%s'", k8sTerraformRunnerRole, terraformRunnerNamespace)
+			proceed, err := message.BoolSelect("Proceed?")
+			if err != nil {
+				return fmt.Errorf("failed to get user input: %w", err)
+			}
+			if proceed {
+				if err = clientset.RbacV1().Roles(terraformRunnerNamespace).Delete(ctx, k8sTerraformRunnerRole, metav1.DeleteOptions{}); err != nil {
+					var sErr *kerrors.StatusError
+					if errors.As(err, &sErr) && sErr.ErrStatus.Code == 404 {
+						message.Info("k8s role '%s' already deleted", k8sTerraformRunnerRole)
+					} else {
+						return fmt.Errorf("failed to delete k8s role '%s': %w", k8sTerraformRunnerRole, err)
+					}
+				} else {
+					message.Debug("k8s role '%s' deleted", k8sTerraformRunnerRole)
+				}
+				session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sRole = ""
+				if err = session.Save(); err != nil {
+					return fmt.Errorf("failed to save state: %w", err)
+				}
+			}
+		}
+
+		message.Info("Terraform runner namespace '%s' will be deleted from K8s cluster", terraformRunnerNamespace)
+		proceed, err := message.BoolSelect("Proceed?")
+		if err != nil {
+			return fmt.Errorf("failed to get user input: %w", err)
+		}
+		if proceed {
+			if err = clientset.CoreV1().Namespaces().Delete(ctx, terraformRunnerNamespace, metav1.DeleteOptions{}); err != nil {
+				var sErr *kerrors.StatusError
+				if errors.As(err, &sErr) && sErr.ErrStatus.Code == 404 {
+					message.Info("namespace '%s' already deleted", terraformRunnerNamespace)
+				} else {
+					return fmt.Errorf("failed to delete namespace '%s': %w", terraformRunnerNamespace, err)
+				}
+			} else {
+				message.Debug("namespace '%s' deleted", terraformRunnerNamespace)
+			}
+			session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerNamespace = ""
+			if err = session.Save(); err != nil {
+				return fmt.Errorf("failed to save state: %w", err)
+			}
+		}
+	}
+
 	if clusterRoleBindingName != nil && *clusterRoleBindingName != "" {
 		message.Info("Cluster Role Binding will be deleted from K8s cluster: %s", *clusterRoleBindingName)
 		proceed, err := message.BoolSelect("Proceed?")
@@ -262,8 +370,8 @@ func deleteK8sResources(ctx context.Context, kubeConfigPath string) error {
 			return fmt.Errorf("failed to get user input: %w", err)
 		}
 		if proceed {
-			if err = clientset.RbacV1().ClusterRoleBindings().Delete(ctx, *clusterRoleBindingName, k8s_meta.DeleteOptions{}); err != nil {
-				if k8s_apierrors.IsNotFound(err) {
+			if err = clientset.RbacV1().ClusterRoleBindings().Delete(ctx, *clusterRoleBindingName, metav1.DeleteOptions{}); err != nil {
+				if kerrors.IsNotFound(err) {
 					message.Info("The resource doesn't exist or has been already removed")
 				} else {
 					return fmt.Errorf("failed to delete cluster role binding: %w", err)
@@ -283,8 +391,8 @@ func deleteK8sResources(ctx context.Context, kubeConfigPath string) error {
 			return fmt.Errorf("failed to get user input: %w", err)
 		}
 		if proceed {
-			if err = clientset.RbacV1().ClusterRoles().Delete(ctx, *clusterRoleName, k8s_meta.DeleteOptions{}); err != nil {
-				if k8s_apierrors.IsNotFound(err) {
+			if err = clientset.RbacV1().ClusterRoles().Delete(ctx, *clusterRoleName, metav1.DeleteOptions{}); err != nil {
+				if kerrors.IsNotFound(err) {
 					message.Info("The resource doesn't exist or has been already removed")
 				} else {
 					return fmt.Errorf("failed to delete cluster role: %w", err)
@@ -319,8 +427,8 @@ func deleteK8sResources(ctx context.Context, kubeConfigPath string) error {
 			return fmt.Errorf("failed to get user input: %w", err)
 		}
 		if proceed {
-			if err = clientset.CoreV1().Namespaces().Delete(ctx, cluster.AgentNamespace, k8s_meta.DeleteOptions{}); err != nil {
-				if k8s_apierrors.IsNotFound(err) {
+			if err = clientset.CoreV1().Namespaces().Delete(ctx, cluster.AgentNamespace, metav1.DeleteOptions{}); err != nil {
+				if kerrors.IsNotFound(err) {
 					message.Info("The resource doesn't exist or has been already removed")
 				} else {
 					return fmt.Errorf("failed to delete namespace: %w", err)
@@ -351,8 +459,8 @@ func deleteK8sResources(ctx context.Context, kubeConfigPath string) error {
 			return fmt.Errorf("failed to get user input: %w", err)
 		}
 		if proceed {
-			if err = clientset.CoreV1().Namespaces().Delete(ctx, session.State.Application.Connect.OperatorNamespace, k8s_meta.DeleteOptions{}); err != nil {
-				if k8s_apierrors.IsNotFound(err) {
+			if err = clientset.CoreV1().Namespaces().Delete(ctx, session.State.Application.Connect.OperatorNamespace, metav1.DeleteOptions{}); err != nil {
+				if kerrors.IsNotFound(err) {
 					message.Info("The resource doesn't exist or has been already removed")
 				} else {
 					return fmt.Errorf("failed to delete namespace: %w", err)
