@@ -1,6 +1,6 @@
 module github.com/humanitec/humctl-wizard
 
-go 1.22.5
+go 1.23
 
 require (
 	cloud.google.com/go/serviceusage v1.9.0
