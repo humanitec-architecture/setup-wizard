@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"encoding/json"
 	"os"
 	"path"
 	"strings"
 	"time"
+	"bytes"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -130,6 +132,12 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 			]
 		}`, externalId)
 
+		minifiedTrustPolicy := &bytes.Buffer{}
+		if err := json.Compact(minifiedTrustPolicy, []byte(trustPolicy)); err != nil {
+			return "", fmt.Errorf("failed to minify trust policy, %w", err)
+		}
+
+		message.Info("Creating AWS Role: aws iam create-role --role-name %s --assume-role-policy-document '%s'", roleName, minifiedTrustPolicy.String())
 		createRoleResp, err := iamClient.CreateRole(ctx, &iam.CreateRoleInput{
 			AssumeRolePolicyDocument: &trustPolicy,
 			RoleName:                 &roleName,
@@ -167,6 +175,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 	}
 
 	if session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId == "" {
+		message.Info("Creating Humanitec Cloud Account: %s", humanitecCloudAccountId)
 		if err := createResourceAccountWithRetries(ctx, a.humanitecPlatform.Client, a.humanitecPlatform.OrganizationId, client.CreateResourceAccountRequestRequest{
 			Id:   humanitecCloudAccountId,
 			Name: humanitecCloudAccountName,
@@ -289,7 +298,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 
 	if session.State.AwsProvider.ConnectCluster.PolicyArn == "" {
 		policyName := generateAwsPolicyName(fmt.Sprintf("humanitec-access-eks-%s", *clusterResp.Cluster.Name))
-		rolePolicy := fmt.Sprintf(`{
+		policyDocument := fmt.Sprintf(`{
 			"Version": "2012-10-17",
 			"Statement": [
 				{
@@ -306,8 +315,14 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 			]
 		}`, *clusterResp.Cluster.Arn)
 
+		policyDocumentMinified := &bytes.Buffer{}
+		if err := json.Compact(policyDocumentMinified, []byte(policyDocument)); err != nil {
+			return "", fmt.Errorf("failed to minify role policy, %w", err)
+		}
+
+		message.Info("Creating AWS Policy: aws iam create-policy --policy-name %s --policy-document '%s'", policyName, policyDocumentMinified.String())
 		createPolicyResp, err := iamClient.CreatePolicy(ctx, &iam.CreatePolicyInput{
-			PolicyDocument: &rolePolicy,
+			PolicyDocument: &policyDocument,
 			PolicyName:     &policyName,
 		})
 		if err != nil {
@@ -333,6 +348,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 	}
 
 	if !isPolicyAttached {
+		message.Info("Attaching policy to role: aws iam attach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.CreateCloudIdentity.RoleName, session.State.AwsProvider.ConnectCluster.PolicyArn)
 		_, err = iamClient.AttachRolePolicy(ctx, &iam.AttachRolePolicyInput{
 			PolicyArn: &session.State.AwsProvider.ConnectCluster.PolicyArn,
 			RoleName:  &session.State.AwsProvider.CreateCloudIdentity.RoleName,
@@ -351,6 +367,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 	if err := session.Save(); err != nil {
 		return "", fmt.Errorf("failed to save state: %w", err)
 	}
+
 	rbacSubject := k8s_rbac.Subject{
 		Kind: "Group",
 		Name: session.State.AwsProvider.ConnectCluster.K8sRbacGroupName,
@@ -388,6 +405,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 				"  - " + session.State.AwsProvider.ConnectCluster.K8sRbacGroupName,
 			}, "\n")
 
+			message.Info("Updating ConfigMap 'aws-auth' with role %s", session.State.AwsProvider.CreateCloudIdentity.RoleArn)
 			_, err = a.k8sClient.CoreV1().ConfigMaps("kube-system").Update(ctx, configMap, k8s_meta.UpdateOptions{})
 			if err != nil {
 				return "", fmt.Errorf("failed to update ConfigMap 'aws-auth': %w", err)
@@ -400,6 +418,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 		}
 
 		if !isAccessEntryCreated {
+			message.Info("Creating AWS Access Entry: aws eks create-access-entry --cluster-name %s --principal-arn %s --kubernetes-groups %s", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn, session.State.AwsProvider.ConnectCluster.K8sRbacGroupName)
 			_, err = eksClient.CreateAccessEntry(ctx, &eks.CreateAccessEntryInput{
 				ClusterName:  clusterResp.Cluster.Name,
 				PrincipalArn: &session.State.AwsProvider.CreateCloudIdentity.RoleArn,
@@ -479,6 +498,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 	}
 
 	if !isHumanitecClusterResourceCreated {
+		message.Info("Creating Humanitec Resource Cluster: %s", humanitecClusterId)
 		createResourceResp, err := a.humanitecPlatform.Client.CreateResourceDefinitionWithResponse(ctx, a.humanitecPlatform.OrganizationId, client.CreateResourceDefinitionRequestRequest{
 			Id:            humanitecClusterId,
 			Name:          humanitecClusterName,
@@ -574,6 +594,11 @@ func (a *awsProvider) ListSecretManagers(ctx context.Context) ([]string, error) 
 }
 
 func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.HumanitecPlatform, kubeconfig, operatorNamespace, clusterId, secretManager, humanitecSecretStoreId string) error {
+	err := a.ensureK8sClient(ctx, clusterId)
+	if err != nil {
+		return fmt.Errorf("failed to ensure k8s client, %w", err)
+	}
+	
 	accountId, err := a.getAccountId(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get calling user id, %w", err)
@@ -600,6 +625,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	}
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN == "" {
+		secretsManagerAccessPolicyName := generateAwsPolicyName("secrets-manager-access")
 		secretsManagerAccessPolicy := fmt.Sprintf(`{
 			"Version": "2012-10-17",
 			"Statement": {
@@ -615,7 +641,12 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 			}
 		  }`, secretsManagerPolicyResourceArn)
 
-		secretsManagerAccessPolicyName := generateAwsPolicyName("secrets-manager-access")
+		secretsManagerAccessPolicyMinified := &bytes.Buffer{}
+		if err := json.Compact(secretsManagerAccessPolicyMinified, []byte(secretsManagerAccessPolicy)); err != nil {
+			return fmt.Errorf("failed to minify secrets manager access policy, %w", err)
+		}
+
+		message.Info("Creating Secret Access Policy: aws iam create-policy --policy-name %s --policy-document '%s'", secretsManagerAccessPolicyName, secretsManagerAccessPolicyMinified.String())
 		createPolicyResp, err := iamClient.CreatePolicy(ctx, &iam.CreatePolicyInput{
 			PolicyDocument: &secretsManagerAccessPolicy,
 			PolicyName:     &secretsManagerAccessPolicyName,
@@ -652,6 +683,8 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	}
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName == "" {
+		trustPolicyRoleName := generateAwsRoleName("humanitec-operator-sa")
+		trustPolicyRoleDescription := "Humanitec Operator service account on EKS cluster"
 		trustPolicy := `{
 			"Version": "2012-10-17",
 			"Statement": [
@@ -668,9 +701,13 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 				}
 			]
 		}`
-		trustPolicyRoleName := generateAwsRoleName("humanitec-operator-sa")
-		trustPolicyRoleDescription := "Humanitec Operator service account on EKS cluster"
 
+		trustPolicyMinified := &bytes.Buffer{}
+		if err := json.Compact(trustPolicyMinified, []byte(trustPolicy)); err != nil {
+			return fmt.Errorf("failed to minify trust policy, %w", err)
+		}
+
+		message.Info("Creating Trust Policy Role: aws iam create-role --role-name %s --description %s --assume-role-policy-document '%s'", trustPolicyRoleName, trustPolicyRoleDescription, trustPolicyMinified.String())
 		createRoleResp, err := iamClient.CreateRole(ctx, &iam.CreateRoleInput{
 			RoleName:                 &trustPolicyRoleName,
 			Description:              &trustPolicyRoleDescription,
@@ -697,6 +734,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 		return fmt.Errorf("failed to check if policy is attached to role, %w", err)
 	}
 	if !isAccessSecretPolicyAttached {
+		message.Info("Attaching policy to role: aws iam attach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
 		_, err = iamClient.AttachRolePolicy(ctx, &iam.AttachRolePolicyInput{
 			PolicyArn: &session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN,
 			RoleName:  &session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName,
@@ -724,6 +762,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	}
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId == "" {
+		message.Info("Creating Pod Identity Association: aws eks create-pod-identity-association --cluster-name %s --namespace %s --service-account %s --role-arn %s", clusterId, operatorNamespace, humanitecOperatorServiceAccount, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleARN)
 		createPodIdentityAssociationResp, err := eksClient.CreatePodIdentityAssociation(ctx, &eks.CreatePodIdentityAssociationInput{
 			ClusterName:    &clusterId,
 			Namespace:      &operatorNamespace,
@@ -742,6 +781,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 		message.Info("Pod identity association already created: %s, loading from state", session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
 	}
 
+	message.Info("Creating Humanitec Secret Store configuration: %s", humanitecSecretStoreId)
 	err = cluster.ApplySecretStore(ctx, kubeconfig, operatorNamespace, humanitecSecretStoreId, &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "humanitec.io/v1alpha1",
@@ -765,9 +805,48 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 		return fmt.Errorf("failed to register secret store, %w", err)
 	}
 
-	err = cluster.RestartOperatorDeployment(ctx, kubeconfig, operatorNamespace)
-	if err != nil {
-		return fmt.Errorf("failed to restart operator deployment, %w", err)
+	message.Info("Restarting operator deployment")
+
+	timeout := time.After(5 * time.Minute)
+	tick := time.Tick(5 * time.Second)
+
+	mainLoop:
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timed out waiting for operator deployment to be ready")
+		case <-tick:
+			deployment, err := a.k8sClient.AppsV1().Deployments(operatorNamespace).Get(ctx, "humanitec-operator-controller-manager", k8s_meta.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to get operator deployment, %w", err)
+			}
+
+			if deployment.Status.Replicas != *deployment.Spec.Replicas {
+				message.Debug("Operator deployment is not ready, waiting for it to be ready")
+				continue mainLoop
+			}
+
+			selector, err := k8s_meta.LabelSelectorAsSelector(deployment.Spec.Selector)
+			if err != nil {
+				return fmt.Errorf("failed to get operator deployment selector, %w", err)
+			}
+
+			pods, err := a.k8sClient.CoreV1().Pods(operatorNamespace).List(ctx, k8s_meta.ListOptions{
+				LabelSelector: selector.String(),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to list operator pods, %w", err)
+			}
+
+			if a.isOperatorPodReady(*pods) {
+				break mainLoop
+			}
+
+			err = cluster.RestartOperatorDeployment(ctx, kubeconfig, operatorNamespace)
+			if err != nil {
+				return fmt.Errorf("failed to restart operator deployment, %w", err)
+			}
+		}
 	}
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId != "" {
@@ -785,6 +864,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	}
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId == "" {
+		message.Info("Registering Secret Store with Humanitec: %s", humanitecSecretStoreId)
 		createSecretStore, err := platform.Client.PostOrgsOrgIdSecretstoresWithResponse(ctx, platform.OrganizationId, client.PostOrgsOrgIdSecretstoresJSONRequestBody{
 			Id:      humanitecSecretStoreId,
 			Primary: true,
@@ -808,6 +888,36 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	}
 
 	return nil
+}
+
+func (*awsProvider) isOperatorPodReady(pods v1.PodList) bool {
+	atLeastOnePodReady := false
+	for _, pod := range pods.Items {
+		for _, container := range pod.Spec.Containers {
+			if container.Name == "manager" {
+				isAuthorizationTokenFileSet := false
+				for _, env := range container.Env {
+					if env.Name == "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" {
+						isAuthorizationTokenFileSet = true
+						break
+					}
+				}
+				if isAuthorizationTokenFileSet {
+					atLeastOnePodReady = true
+					break
+				}
+			}
+		}
+		if atLeastOnePodReady {
+			break
+		}
+	}
+	if atLeastOnePodReady {
+		return true
+	} else {
+		message.Debug("Operator pod is not ready, waiting for it to be ready")
+		return false
+	}
 }
 
 func (a *awsProvider) IsSecretStoreRegistered(ctx context.Context) (bool, error) {
