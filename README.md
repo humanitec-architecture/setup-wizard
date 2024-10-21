@@ -50,6 +50,8 @@
 
 ## Usage
 
+### Running the wizard
+
 Log in to Humanitec using `humctl`:
 
 ```bash
@@ -63,6 +65,16 @@ To start the wizard, simply run:
 ```
 
 The wizard will guide you through the process of connecting your cloud infrastructure to Humanitec.
+
+## Cleaning up
+
+To clean up resources created through previous runs of the Wizard, run:
+
+```bash
+./humanitec-setup-wizard clean
+```
+
+Note that, because the state is stored locally, this command needs to be executed on the same system which previously ran the wizard.
 
 ## AWS Authentication
 
@@ -175,6 +187,8 @@ During the execution of the CLI wizard, the following GCP / Kubernetes resources
 
 The CLI wizard outputs the name of every GCP resources generated and stores them in the state session.
 
+To remove the resources created, see [cleaning up](#cleaning-up).
+
 ## Azure Provider Documentation
 
 ### Authentication
@@ -213,6 +227,8 @@ The CLI wizard assumes that:
   - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources.
 
 The CLI wizard outputs the name of every Azure resources generated and stores them in the state session.
+
+To remove the resources created, see [cleaning up](#cleaning-up).
 
 ## Test Application
 
