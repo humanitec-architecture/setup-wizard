@@ -62,7 +62,7 @@ var connectCmd = &cobra.Command{
 			return fmt.Errorf("failed to select cloud provider: %w", err)
 		}
 
-		cloudAccountId, err := createCloudIdentity(ctx, provider)
+		cloudAccountId, err := createCloudIdentity(ctx, provider, humanitecPlatform)
 		if err != nil {
 			return fmt.Errorf("failed to create cloud identity: %w", err)
 		}
@@ -138,35 +138,27 @@ var connectCmd = &cobra.Command{
 			"The Humanitec Operator is a Kubernetes (K8s) operator that controls Deployments made with the Humanitec Platform Orchestrator. Since Humanitec Resources creation can depend on secrets, the Humanitec Operator is also capable of and responsible for provisioning the required Kubernetes Secret resources in the cluster.",
 			"https://developer.humanitec.com/integration-and-extensions/humanitec-operator/overview/",
 		)
-		isSecretStoreRegistered, err := provider.IsSecretStoreRegistered(ctx)
+
+		internalSecrets, err := humanitecPlatform.CheckInternalSecrets(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to check if operator is already installed: %w", err)
+			return fmt.Errorf("failed to check if resource definitions or shared secrets contain internal values: %w", err)
 		}
-		if !isSecretStoreRegistered {
-			internalSecrets, err := humanitecPlatform.CheckInternalSecrets(ctx)
-			if internalSecrets {
-				proceedWithOperator, err := message.BoolSelect(`Your organization has some definitions or shared values with secret inputs stored in the Internal Humanitec Secret Store. 
+		if internalSecrets {
+			proceedWithOperator, err := message.BoolSelect(`Your organization has some definitions or shared values with secret inputs stored in the Internal Humanitec Secret Store. 
 Deployments involving these entities will not work anymore proceeding with the Wizard execution. Do you want to proceed anyway and switch your organization to Operator deployment mode?`)
-				if err != nil {
-					return fmt.Errorf("failed to select if install operator: %w", err)
-				}
-				if !proceedWithOperator {
-					return errors.New("wizard aborted, Operator mode is the only deployment mode available via Wizard")
-				}
-			}
-
 			if err != nil {
-				return fmt.Errorf("failed to check if resource definitions or shared secrets contain internal values: %w", err)
+				return fmt.Errorf("failed to select if install operator: %w", err)
 			}
-
-			err = installOperator(ctx, humanitecPlatform, provider, kubeConfigPath, clusterId)
-			if err != nil {
-				return fmt.Errorf("failed to install operator: %w", err)
+			if !proceedWithOperator {
+				return errors.New("wizard aborted, Operator mode is the only deployment mode available via Wizard")
 			}
-			message.Success("Humanitec Operator installed")
-		} else {
-			message.Success("Humanitec Operator already installed")
 		}
+
+		err = installOperator(ctx, humanitecPlatform, provider, kubeConfigPath, clusterId)
+		if err != nil {
+			return fmt.Errorf("failed to install operator: %w", err)
+		}
+		message.Success("Humanitec Operator installed")
 
 		message.DocumentationReference(
 			"Humanitec Terraform Driver allows to execute Terraform scripts in a target cluster.",
@@ -276,16 +268,12 @@ func deployTestApplication(ctx context.Context, humanitecPlatform *platform.Huma
 }
 
 func installOperator(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform, provider cloud.Provider, kubeconfig, clusterId string) error {
-	secretManager, err := selectSecretManager(ctx, provider)
-	if err != nil {
-		return fmt.Errorf("failed to select secret manager: %w", err)
-	}
-
 	var operatorNamespace string
 	if session.State.Application.Connect.OperatorNamespace != "" {
 		operatorNamespace = session.State.Application.Connect.OperatorNamespace
 		message.Info("Using operator namespace from previous session: %s", operatorNamespace)
 	} else {
+		var err error
 		operatorNamespace, err = message.Prompt("Please enter the namespace for the operator you would like to create in your Humanitec Organization", "humanitec-operator-system")
 		if err != nil {
 			return fmt.Errorf("failed to get operator namespace: %w", err)
@@ -296,12 +284,29 @@ func installOperator(ctx context.Context, humanitecPlatform *platform.HumanitecP
 		}
 	}
 
-	_, err = cluster.InstallUpgradeOperator(kubeconfig, operatorNamespace, nil)
+	shouldInstallOperator := true
+	isOperatorInstalled, err := cluster.IsOperatorInstalled(kubeconfig, operatorNamespace)
 	if err != nil {
-		return fmt.Errorf("failed to install operator: %w", err)
+		return fmt.Errorf("failed to check if operator is already installed: %w", err)
+	}
+	if isOperatorInstalled {
+		answer, err := message.BoolSelect("Operator already installed. Do you want to update it?")
+		if err != nil {
+			return fmt.Errorf("failed to select if update operator: %w", err)
+		}
+		if !answer {
+			message.Info("Operator already installed")
+			shouldInstallOperator = false
+		}
+	}
+	if shouldInstallOperator {
+		_, err = cluster.InstallUpgradeOperator(kubeconfig, operatorNamespace, nil)
+		if err != nil {
+			return fmt.Errorf("failed to install operator: %w", err)
+		}
 	}
 
-	if err = cluster.ConfigureDriverAuth(ctx, kubeconfig, operatorNamespace, humanitecPlatform); err != nil {
+	if err := cluster.ConfigureDriverAuth(ctx, kubeconfig, operatorNamespace, humanitecPlatform); err != nil {
 		return fmt.Errorf("failed to configure operator to use drivers: %w", err)
 	}
 
@@ -318,6 +323,11 @@ func installOperator(ctx context.Context, humanitecPlatform *platform.HumanitecP
 		if err := session.Save(); err != nil {
 			return fmt.Errorf("failed to save session: %w", err)
 		}
+	}
+
+	secretManager, err := selectSecretManager(ctx, provider)
+	if err != nil {
+		return fmt.Errorf("failed to select secret manager: %w", err)
 	}
 
 	err = provider.ConfigureOperator(ctx, humanitecPlatform, kubeconfig, operatorNamespace, clusterId, secretManager, humanitecSecretStoreId)
@@ -373,13 +383,6 @@ func selectSecretManager(ctx context.Context, provider cloud.Provider) (string, 
 	}
 	var secretManagerId string
 	if len(secretManagers) == 1 {
-		answer, err := message.BoolSelect(fmt.Sprintf("Only one secret manager found: %s. Do you want to use it", secretManagers[0]))
-		if err != nil {
-			return "", fmt.Errorf("failed to select secret manager: %w", err)
-		}
-		if !answer {
-			return "", errors.New("no secret manager selected")
-		}
 		secretManagerId = secretManagers[0]
 	} else {
 		secretManagerId, err = message.Select("Select secret manager", secretManagers)
@@ -679,7 +682,7 @@ func selectCloudProvider(ctx context.Context, humanitecPlatform *platform.Humani
 	return provider, nil
 }
 
-func createCloudIdentity(ctx context.Context, provider cloud.Provider) (string, error) {
+func createCloudIdentity(ctx context.Context, provider cloud.Provider, humanitecPlatform *platform.HumanitecPlatform) (string, error) {
 	message.DocumentationReference(
 		"A Cloud Account allows you to store credentials for cloud infrastructure which the Platform Orchestrator needs to connect to at a central place in your Humanitec Organization. Configured Cloud Accounts can then be referenced in Resource Definitions to connect to cloud resources, removing the need to maintain those credentials for every single Resource Definition.",
 		"https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/overview/",
@@ -709,8 +712,20 @@ func createCloudIdentity(ctx context.Context, provider cloud.Provider) (string, 
 	if err != nil {
 		return "", err
 	}
-	message.Success("Cloud identity created and successfully tested: %s", cloudIdentity)
-	return cloudAccountId, nil
+
+	result, err := humanitecPlatform.CheckResourceAccountValidity(ctx, cloudIdentity)
+	if err != nil {
+		return "", fmt.Errorf("failed to check resource account validity: %w", err)
+	}
+	if result.Error != nil {
+		return "", fmt.Errorf("resource account validity check failed: %s", *result.Error)
+	}
+	for _, warning := range result.Warnings {
+		message.Warning("Resource account validity check warning: %s", warning)
+	}
+
+	message.Success("Cloud account created and successfully validated: %s", cloudIdentity)
+	return cloudIdentity, nil
 }
 
 func createResourcesForTerraformRunnerExecution(
