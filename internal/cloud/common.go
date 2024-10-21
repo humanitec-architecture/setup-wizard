@@ -20,25 +20,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-func checkResourceAccount(ctx context.Context, client *humanitec.Client, orgID, cloudAccountID string) error {
-	resp, err := client.CheckResourceAccountWithResponse(ctx, orgID, cloudAccountID)
-	if err != nil {
-		return fmt.Errorf("failed to check Cloud Account '%s' with Humanitec: %w", cloudAccountID, err)
-	}
-
-	if resp.StatusCode() == http.StatusOK {
-		if resp.JSON200.Warnings != nil {
-			message.Info("check Cloud Account '%s' received some warnings: %v", cloudAccountID, *resp.JSON200.Warnings)
-		}
-		return nil
-	}
-
-	if resp.StatusCode() == http.StatusBadRequest {
-		return fmt.Errorf("check Cloud Account '%s' with Humanitec unsuccessful. %s %s %v", cloudAccountID, resp.JSON400.Error, resp.JSON400.Message, resp.JSON400.Details)
-	}
-	return fmt.Errorf("failed to check Cloud Account '%s' with Humanitec: unexpected status code %d", cloudAccountID, resp.StatusCode())
-}
-
 func createResourceAccount(ctx context.Context, humClient *humanitec.Client, orgID string, req client.CreateResourceAccountRequestRequest) error {
 	resp, err := humClient.CreateResourceAccountWithResponse(ctx, orgID,
 		&client.CreateResourceAccountParams{
@@ -145,20 +126,6 @@ func ensurek8sClusterRole(ctx context.Context, k8sClient *kubernetes.Clientset, 
 	}
 
 	return false, nil
-}
-
-func findExternalPrimarySecretStore(ctx context.Context, humClient *humanitec.Client, orgId, secretStoreId string) (bool, error) {
-	resp, err := humClient.GetOrgsOrgIdSecretstoresStoreIdWithResponse(ctx, orgId, secretStoreId)
-	if err != nil {
-		return false, fmt.Errorf("failed to get Secret Store '%s' in Humanitec: %w", secretStoreId, err)
-	}
-	if resp.StatusCode() == http.StatusNotFound {
-		return false, nil
-	} else if resp.JSON200 != nil {
-		return resp.JSON200.Primary, nil
-	} else {
-		return false, fmt.Errorf("failed to get Secret Store '%s' in Humanitec: unexpected status code %d instead of %d", secretStoreId, resp.StatusCode(), http.StatusOK)
-	}
 }
 
 func ensureSecretStore(ctx context.Context, humClient *humanitec.Client, orgId, secretStoreId string, reqBody client.PostOrgsOrgIdSecretstoresJSONRequestBody) (bool, error) {

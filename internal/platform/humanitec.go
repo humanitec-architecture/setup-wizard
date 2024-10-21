@@ -29,7 +29,6 @@ func NewHumanitecPlatform(token string) (*HumanitecPlatform, error) {
 	return &HumanitecPlatform{Client: humClient}, nil
 }
 
-
 type CatchExpiredHumanitecToken struct {
 	Proxied http.RoundTripper
 }

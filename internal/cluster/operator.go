@@ -188,7 +188,12 @@ func ApplySecretStore(ctx context.Context, kubeconfig, namespace, secretsStoreId
 }
 
 func ConfigureDriverAuth(ctx context.Context, kubeconfig, namespace string, platform *platform.HumanitecPlatform) error {
-	if session.State.Application.Connect.DriverAuthKey != "" {
+	isSecretExists, err := IsSecretExists(ctx, kubeconfig, namespace, "humanitec-operator-private-key")
+	if err != nil {
+		return fmt.Errorf("failed to check if secret exists: %w", err)
+	}
+
+	if isSecretExists && session.State.Application.Connect.DriverAuthKey != "" {
 		useExisting, err := message.BoolSelect("The operator already configured to authenticate Humanitec drivers. Would you like to use the existing configuration?")
 		if err != nil {
 			return fmt.Errorf("failed to select an option: %w", err)

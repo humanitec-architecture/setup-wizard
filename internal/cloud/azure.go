@@ -303,9 +303,6 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 		}
 	} else {
 		message.Info("Humanitec Cloud Account already created, loading from state: %s", session.State.AzureProvider.CreateCloudIdentity.HumanitecCloudAccountId)
-		if err := checkResourceAccount(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, humanitecCloudAccountId); err != nil {
-			return "", fmt.Errorf("failed to test existing resource account, %w", err)
-		}
 	}
 
 	return session.State.AzureProvider.CreateCloudIdentity.HumanitecCloudAccountId, nil
@@ -743,17 +740,6 @@ func (p *azureProvider) ConfigureOperator(ctx context.Context, platform *platfor
 	message.Info("SecretStore configuration applied to the cluster")
 
 	return nil
-}
-
-func (p *azureProvider) IsSecretStoreRegistered(ctx context.Context) (bool, error) {
-	if session.State.AzureProvider.ConfigureOperatorAccess.SecretStoreId != "" {
-		if isSecretStoreCreated, err := findExternalPrimarySecretStore(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId); err != nil {
-			return false, fmt.Errorf("failed to check if secret store exists, %w", err)
-		} else {
-			return isSecretStoreCreated, nil
-		}
-	}
-	return false, nil
 }
 
 func (p *azureProvider) CleanState(ctx context.Context) error {

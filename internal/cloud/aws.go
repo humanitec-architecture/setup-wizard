@@ -1,16 +1,16 @@
 package cloud
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"encoding/json"
 	"os"
 	"path"
 	"strings"
 	"time"
-	"bytes"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -195,9 +195,6 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 		message.Info("Humanitec Cloud Account created: %s", humanitecCloudAccountId)
 	} else {
 		message.Info("Humanitec Cloud Account already created, loading from state: %s", session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId)
-		if err := checkResourceAccount(ctx, a.humanitecPlatform.Client, a.humanitecPlatform.OrganizationId, humanitecCloudAccountId); err != nil {
-			return "", err
-		}
 	}
 
 	return session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId, nil
@@ -598,7 +595,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	if err != nil {
 		return fmt.Errorf("failed to ensure k8s client, %w", err)
 	}
-	
+
 	accountId, err := a.getAccountId(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get calling user id, %w", err)
@@ -805,49 +802,11 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 		return fmt.Errorf("failed to register secret store, %w", err)
 	}
 
-	message.Info("Restarting operator deployment")
-
-	timeout := time.After(5 * time.Minute)
-	tick := time.Tick(5 * time.Second)
-
-	mainLoop:
-	for {
-		select {
-		case <-timeout:
-			return fmt.Errorf("timed out waiting for operator deployment to be ready")
-		case <-tick:
-			deployment, err := a.k8sClient.AppsV1().Deployments(operatorNamespace).Get(ctx, "humanitec-operator-controller-manager", k8s_meta.GetOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to get operator deployment, %w", err)
-			}
-
-			if deployment.Status.Replicas != *deployment.Spec.Replicas {
-				message.Debug("Operator deployment is not ready, waiting for it to be ready")
-				continue mainLoop
-			}
-
-			selector, err := k8s_meta.LabelSelectorAsSelector(deployment.Spec.Selector)
-			if err != nil {
-				return fmt.Errorf("failed to get operator deployment selector, %w", err)
-			}
-
-			pods, err := a.k8sClient.CoreV1().Pods(operatorNamespace).List(ctx, k8s_meta.ListOptions{
-				LabelSelector: selector.String(),
-			})
-			if err != nil {
-				return fmt.Errorf("failed to list operator pods, %w", err)
-			}
-
-			if a.isOperatorPodReady(*pods) {
-				break mainLoop
-			}
-
-			err = cluster.RestartOperatorDeployment(ctx, kubeconfig, operatorNamespace)
-			if err != nil {
-				return fmt.Errorf("failed to restart operator deployment, %w", err)
-			}
-		}
+	err = a.restartOperatorUntilPodIsReady(ctx, kubeconfig, operatorNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to restart operator deployment, %w", err)
 	}
+	message.Info("Operator deployment restarted")
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId != "" {
 		isSecretStoreCreated, err := a.isHumanitecSecretStoreResourceCreated(ctx, session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId)
@@ -890,6 +849,57 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	return nil
 }
 
+func (a *awsProvider) restartOperatorUntilPodIsReady(ctx context.Context, kubeconfig, namespace string) error {
+	message.Info("Restarting operator deployment")
+	err := cluster.RestartOperatorDeployment(ctx, kubeconfig, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to restart operator deployment, %w", err)
+	}
+
+	timeout := time.After(5 * time.Minute)
+	tick := time.Tick(5 * time.Second)
+
+mainLoop:
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timed out waiting for operator deployment to be ready")
+		case <-tick:
+			deployment, err := a.k8sClient.AppsV1().Deployments(namespace).Get(ctx, "humanitec-operator-controller-manager", k8s_meta.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to get operator deployment, %w", err)
+			}
+
+			if deployment.Status.Replicas != *deployment.Spec.Replicas {
+				message.Debug("Operator deployment is not ready, waiting for it to be ready")
+				continue mainLoop
+			}
+
+			selector, err := k8s_meta.LabelSelectorAsSelector(deployment.Spec.Selector)
+			if err != nil {
+				return fmt.Errorf("failed to get operator deployment selector, %w", err)
+			}
+
+			pods, err := a.k8sClient.CoreV1().Pods(namespace).List(ctx, k8s_meta.ListOptions{
+				LabelSelector: selector.String(),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to list operator pods, %w", err)
+			}
+
+			if a.isOperatorPodReady(*pods) {
+				break mainLoop
+			}
+
+			err = cluster.RestartOperatorDeployment(ctx, kubeconfig, namespace)
+			if err != nil {
+				return fmt.Errorf("failed to restart operator deployment, %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 func (*awsProvider) isOperatorPodReady(pods v1.PodList) bool {
 	atLeastOnePodReady := false
 	for _, pod := range pods.Items {
@@ -918,17 +928,6 @@ func (*awsProvider) isOperatorPodReady(pods v1.PodList) bool {
 		message.Debug("Operator pod is not ready, waiting for it to be ready")
 		return false
 	}
-}
-
-func (a *awsProvider) IsSecretStoreRegistered(ctx context.Context) (bool, error) {
-	if session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId != "" {
-		isSecretStoreCreated, err := a.isHumanitecSecretStoreResourceCreated(ctx, session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId)
-		if err != nil {
-			return false, fmt.Errorf("failed to check if secret store exists, %w", err)
-		}
-		return isSecretStoreCreated, nil
-	}
-	return false, nil
 }
 
 func (a *awsProvider) CleanState(ctx context.Context) error {

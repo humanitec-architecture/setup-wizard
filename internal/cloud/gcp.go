@@ -344,11 +344,7 @@ func (p *gcpProvider) CreateCloudIdentity(ctx context.Context, cloudAccountId, c
 			message.Info("Cloud Account '%s' already exists in Humanitec", cloudAccountId)
 		}
 	}
-	if cloudAccountExists {
-		if err := checkResourceAccount(ctx, p.humanitecPlatform.Client, orgID, cloudAccountId); err != nil {
-			return "", err
-		}
-	} else {
+	if !cloudAccountExists {
 		message.Info("Creating Humanitec Cloud Account. This can take a while as a test connection with GCP Workload Federation is performed too.")
 		if err := createResourceAccountWithRetries(ctx, p.humanitecPlatform.Client, orgID,
 			client.CreateResourceAccountRequestRequest{
@@ -692,17 +688,6 @@ func (p *gcpProvider) WriteKubeConfig(ctx context.Context, clusterId string) (st
 
 func (p *gcpProvider) ListSecretManagers(ctx context.Context) ([]string, error) {
 	return []string{"gcp-secret-manager"}, nil
-}
-
-func (p *gcpProvider) IsSecretStoreRegistered(ctx context.Context) (bool, error) {
-	if session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId != "" {
-		if isSecretStoreCreated, err := findExternalPrimarySecretStore(ctx, p.humanitecPlatform.Client, p.humanitecPlatform.OrganizationId, session.State.GCPProvider.ConfigureOperatorAccess.SecretStoreId); err != nil {
-			return false, fmt.Errorf("failed to check if secret store exists, %w", err)
-		} else {
-			return isSecretStoreCreated, nil
-		}
-	}
-	return false, nil
 }
 
 // Actions taken from:
