@@ -47,7 +47,7 @@ func createResourceAccountWithRetries(ctx context.Context, client *humanitec.Cli
 	for loop := true; loop; {
 		select {
 		case <-timeoutAfter:
-			return fmt.Errorf("error creating resource account (retry timeout exceeded), %w", err)
+			return fmt.Errorf("error creating resource account (retry timeout exceeded): %w", err)
 		case <-tick:
 			if err = createResourceAccount(ctx, client, orgID, req); err != nil {
 				message.Debug("error creating resource account, retrying: %v", err)

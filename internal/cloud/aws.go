@@ -70,7 +70,7 @@ func newAwsProvider(ctx context.Context, humanitecPlatform *platform.HumanitecPl
 			return retry.AddWithMaxAttempts(retry.NewStandard(), 5)
 		}))
 	if err != nil {
-		return nil, fmt.Errorf("failed to load aws default configuration, %w", err)
+		return nil, fmt.Errorf("failed to load aws default configuration: %w", err)
 	}
 
 	return &awsProvider{
@@ -83,7 +83,7 @@ func (a *awsProvider) GetCallingUserId(ctx context.Context) (string, error) {
 	stsClient := sts.NewFromConfig(a.awsConfig)
 	caller, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		return "", fmt.Errorf("failed to get caller identity, %w", err)
+		return "", fmt.Errorf("failed to get caller identity: %w", err)
 	}
 	if caller == nil || caller.UserId == nil {
 		return "", fmt.Errorf("failed to get caller identity: caller or caller.UserId is nil")
@@ -101,7 +101,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 	if session.State.AwsProvider.CreateCloudIdentity.RoleName != "" {
 		isRoleExists, err := a.isRoleExists(ctx, session.State.AwsProvider.CreateCloudIdentity.RoleName)
 		if err != nil {
-			return "", fmt.Errorf("failed to check if role exists, %w", err)
+			return "", fmt.Errorf("failed to check if role exists: %w", err)
 		}
 		if !isRoleExists {
 			message.Debug("AWS Role not found: %s, clearing state", session.State.AwsProvider.CreateCloudIdentity.RoleName)
@@ -134,7 +134,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 
 		minifiedTrustPolicy := &bytes.Buffer{}
 		if err := json.Compact(minifiedTrustPolicy, []byte(trustPolicy)); err != nil {
-			return "", fmt.Errorf("failed to minify trust policy, %w", err)
+			return "", fmt.Errorf("failed to minify trust policy: %w", err)
 		}
 
 		message.Info("Creating AWS Role: aws iam create-role --role-name %s --assume-role-policy-document '%s'", roleName, minifiedTrustPolicy.String())
@@ -144,7 +144,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 			Description:              &roleDescription,
 		})
 		if err != nil {
-			return "", fmt.Errorf("failed to create role, %w", err)
+			return "", fmt.Errorf("failed to create role: %w", err)
 		}
 
 		if createRoleResp == nil || createRoleResp.Role == nil || createRoleResp.Role.Arn == nil || createRoleResp.Role.RoleName == nil {
@@ -164,7 +164,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 	if session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId != "" {
 		getCloudAccountResp, err := a.humanitecPlatform.Client.GetResourceAccountWithResponse(ctx, a.humanitecPlatform.OrganizationId, session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId)
 		if err != nil {
-			return "", fmt.Errorf("failed to get resource account, %w", err)
+			return "", fmt.Errorf("failed to get resource account: %w", err)
 		}
 		if getCloudAccountResp.StatusCode() == 404 {
 			message.Debug("Humanitec Cloud Account not found: %s, clearing state", session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId)
@@ -185,7 +185,7 @@ func (a *awsProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudAcc
 				"external_id": session.State.AwsProvider.CreateCloudIdentity.ExternalId,
 			},
 		}, 2*time.Minute); err != nil {
-			return "", fmt.Errorf("failed to create resource account, %w", err)
+			return "", fmt.Errorf("failed to create resource account: %w", err)
 		}
 
 		session.State.AwsProvider.CreateCloudIdentity.HumanitecCloudAccountId = humanitecCloudAccountId
@@ -204,7 +204,7 @@ func (a *awsProvider) ListClusters(ctx context.Context) ([]string, error) {
 	eksClient := eks.NewFromConfig(a.awsConfig)
 	listClustersResp, err := eksClient.ListClusters(ctx, &eks.ListClustersInput{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list clusters, %w", err)
+		return nil, fmt.Errorf("failed to list clusters: %w", err)
 	}
 	if listClustersResp == nil || listClustersResp.Clusters == nil {
 		return nil, fmt.Errorf("failed to list clusters: listClustersResp or listClustersResp.Clusters is nil")
@@ -219,7 +219,7 @@ func (a *awsProvider) ListLoadBalancers(ctx context.Context, clusterId string) (
 		Name: &clusterId,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster, %w", err)
+		return nil, fmt.Errorf("failed to describe cluster: %w", err)
 	}
 	if clusterResp == nil || clusterResp.Cluster == nil || clusterResp.Cluster.Arn == nil || clusterResp.Cluster.Name == nil || clusterResp.Cluster.ResourcesVpcConfig == nil || clusterResp.Cluster.ResourcesVpcConfig.VpcId == nil {
 		return nil, fmt.Errorf("failed to describe cluster: clusterResp, clusterResp.Cluster, clusterResp.Cluster.Arn, clusterResp.Cluster.Name, clusterResp.Cluster.ResourcesVpcConfig or clusterResp.Cluster.ResourcesVpcConfig.VpcId is nil")
@@ -230,7 +230,7 @@ func (a *awsProvider) ListLoadBalancers(ctx context.Context, clusterId string) (
 	elbClient := elasticloadbalancing.NewFromConfig(a.awsConfig)
 	loadBalancersResp, err := elbClient.DescribeLoadBalancers(ctx, &elasticloadbalancing.DescribeLoadBalancersInput{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe load balancers, %w", err)
+		return nil, fmt.Errorf("failed to describe load balancers: %w", err)
 	}
 	if loadBalancersResp == nil || loadBalancersResp.LoadBalancerDescriptions == nil {
 		return nil, fmt.Errorf("failed to describe load balancers: loadBalancersResp or loadBalancersResp.LoadBalancerDescriptions is nil")
@@ -247,7 +247,7 @@ func (a *awsProvider) ListLoadBalancers(ctx context.Context, clusterId string) (
 	elbV2Client := elasticloadbalancingv2.NewFromConfig(a.awsConfig)
 	loadBalancersV2Resp, err := elbV2Client.DescribeLoadBalancers(ctx, &elasticloadbalancingv2.DescribeLoadBalancersInput{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe load balancers, %w", err)
+		return nil, fmt.Errorf("failed to describe load balancers: %w", err)
 	}
 	if loadBalancersV2Resp == nil || loadBalancersV2Resp.LoadBalancers == nil {
 		return nil, fmt.Errorf("failed to describe load balancers: loadBalancersV2Resp or loadBalancersV2Resp.LoadBalancers is nil")
@@ -266,7 +266,7 @@ func (a *awsProvider) ListLoadBalancers(ctx context.Context, clusterId string) (
 func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalancerName, humanitecCloudAccountId, humanitecClusterId, humanitecClusterName string) (string, error) {
 	err := a.ensureK8sClient(ctx, clusterId)
 	if err != nil {
-		return "", fmt.Errorf("failed to ensure k8s client, %w", err)
+		return "", fmt.Errorf("failed to ensure k8s client: %w", err)
 	}
 
 	eksClient := eks.NewFromConfig(a.awsConfig)
@@ -274,7 +274,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 		Name: &clusterId,
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to describe cluster, %w", err)
+		return "", fmt.Errorf("failed to describe cluster: %w", err)
 	}
 	if clusterResp == nil || clusterResp.Cluster == nil || clusterResp.Cluster.Arn == nil || clusterResp.Cluster.Name == nil || clusterResp.Cluster.AccessConfig == nil {
 		return "", fmt.Errorf("failed to describe cluster: clusterResp, clusterResp.Cluster, clusterResp.Cluster.Arn, clusterResp.Cluster.Name or clusterResp.Cluster.AccessConfig is nil")
@@ -285,7 +285,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 	if session.State.AwsProvider.ConnectCluster.PolicyArn != "" {
 		isPolicyExists, err := a.isPolicyExists(ctx, session.State.AwsProvider.ConnectCluster.PolicyArn)
 		if err != nil {
-			return "", fmt.Errorf("failed to check if policy exists, %w", err)
+			return "", fmt.Errorf("failed to check if policy exists: %w", err)
 		}
 		if !isPolicyExists {
 			message.Debug("AWS Policy not found: %s, clearing state", session.State.AwsProvider.ConnectCluster.PolicyArn)
@@ -314,7 +314,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 
 		policyDocumentMinified := &bytes.Buffer{}
 		if err := json.Compact(policyDocumentMinified, []byte(policyDocument)); err != nil {
-			return "", fmt.Errorf("failed to minify role policy, %w", err)
+			return "", fmt.Errorf("failed to minify role policy: %w", err)
 		}
 
 		message.Info("Creating AWS Policy: aws iam create-policy --policy-name %s --policy-document '%s'", policyName, policyDocumentMinified.String())
@@ -323,7 +323,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 			PolicyName:     &policyName,
 		})
 		if err != nil {
-			return "", fmt.Errorf("failed to create policy, %w", err)
+			return "", fmt.Errorf("failed to create policy: %w", err)
 		}
 		if createPolicyResp == nil || createPolicyResp.Policy == nil || createPolicyResp.Policy.Arn == nil {
 			return "", fmt.Errorf("failed to create policy: createPolicyResp, createPolicyResp.Policy or createPolicyResp.Policy.Arn is nil")
@@ -341,7 +341,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 
 	isPolicyAttached, err := a.isPolicyAttachedToRole(ctx, session.State.AwsProvider.CreateCloudIdentity.RoleName, session.State.AwsProvider.ConnectCluster.PolicyArn)
 	if err != nil {
-		return "", fmt.Errorf("failed to check if policy is attached to role, %w", err)
+		return "", fmt.Errorf("failed to check if policy is attached to role: %w", err)
 	}
 
 	if !isPolicyAttached {
@@ -351,7 +351,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 			RoleName:  &session.State.AwsProvider.CreateCloudIdentity.RoleName,
 		})
 		if err != nil {
-			return "", fmt.Errorf("failed to attach role policy, %w", err)
+			return "", fmt.Errorf("failed to attach role policy: %w", err)
 		}
 		message.Info("Policy %s attached to role %s", session.State.AwsProvider.ConnectCluster.PolicyName, session.State.AwsProvider.CreateCloudIdentity.RoleName)
 	} else {
@@ -411,7 +411,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 	} else {
 		isAccessEntryCreated, err := a.isAccessEntryExists(ctx, *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
 		if err != nil {
-			return "", fmt.Errorf("failed to check if access entry exists, %w", err)
+			return "", fmt.Errorf("failed to check if access entry exists: %w", err)
 		}
 
 		if !isAccessEntryCreated {
@@ -424,7 +424,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 				},
 			})
 			if err != nil {
-				return "", fmt.Errorf("failed to create access entry, %w", err)
+				return "", fmt.Errorf("failed to create access entry: %w", err)
 			}
 			message.Info("AWS Access Entry to cluster %s created for %s", *clusterResp.Cluster.Name, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
 		} else {
@@ -444,7 +444,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 		elbClient := elasticloadbalancing.NewFromConfig(a.awsConfig)
 		loadBalancersResp, err := elbClient.DescribeLoadBalancers(ctx, &elasticloadbalancing.DescribeLoadBalancersInput{})
 		if err != nil {
-			return "", fmt.Errorf("failed to describe load balancers, %w", err)
+			return "", fmt.Errorf("failed to describe load balancers: %w", err)
 		}
 		if loadBalancersResp == nil || loadBalancersResp.LoadBalancerDescriptions == nil {
 			return "", fmt.Errorf("failed to describe load balancers: loadBalancersResp or loadBalancersResp.LoadBalancerDescriptions is nil")
@@ -465,7 +465,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 		elbV2Client := elasticloadbalancingv2.NewFromConfig(a.awsConfig)
 		loadBalancersV2Resp, err := elbV2Client.DescribeLoadBalancers(ctx, &elasticloadbalancingv2.DescribeLoadBalancersInput{})
 		if err != nil {
-			return "", fmt.Errorf("failed to describe load balancers, %w", err)
+			return "", fmt.Errorf("failed to describe load balancers: %w", err)
 		}
 		if loadBalancersV2Resp == nil || loadBalancersV2Resp.LoadBalancers == nil {
 			return "", fmt.Errorf("failed to describe load balancers: loadBalancersV2Resp or loadBalancersV2Resp.LoadBalancers is nil")
@@ -491,7 +491,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 
 	isHumanitecClusterResourceCreated, err := a.isHumanitecResourceExists(ctx, humanitecClusterId)
 	if err != nil {
-		return "", fmt.Errorf("failed to check if humanitec resource cluster exists, %w", err)
+		return "", fmt.Errorf("failed to check if humanitec resource cluster exists: %w", err)
 	}
 
 	if !isHumanitecClusterResourceCreated {
@@ -507,7 +507,7 @@ func (a *awsProvider) ConnectCluster(ctx context.Context, clusterId, loadBalance
 			},
 		})
 		if err != nil {
-			return "", fmt.Errorf("failed to create resource definition, %w", err)
+			return "", fmt.Errorf("failed to create resource definition: %w", err)
 		}
 		if createResourceResp.StatusCode() != 200 {
 			return "", fmt.Errorf("humanitec returned unexpected status code: %d with body %s", createResourceResp.StatusCode(), string(createResourceResp.Body))
@@ -526,7 +526,7 @@ func (a *awsProvider) IsClusterPubliclyAvailable(ctx context.Context, clusterId 
 		Name: &clusterId,
 	})
 	if err != nil {
-		return false, fmt.Errorf("failed to describe cluster, %w", err)
+		return false, fmt.Errorf("failed to describe cluster: %w", err)
 	}
 	if clusterResp == nil || clusterResp.Cluster == nil || clusterResp.Cluster.ResourcesVpcConfig == nil {
 		return false, fmt.Errorf("failed to describe cluster: clusterResp, clusterResp.Cluster or clusterResp.Cluster.ResourcesVpcConfig is nil")
@@ -538,7 +538,7 @@ func (a *awsProvider) IsClusterPubliclyAvailable(ctx context.Context, clusterId 
 func (a *awsProvider) WriteKubeConfig(ctx context.Context, clusterId string) (string, error) {
 	kubeConfig, err := a.getKubeConfig(ctx, clusterId)
 	if err != nil {
-		return "", fmt.Errorf("failed to get kubeconfig, %w", err)
+		return "", fmt.Errorf("failed to get kubeconfig: %w", err)
 	}
 
 	dirname, err := os.UserHomeDir()
@@ -549,7 +549,7 @@ func (a *awsProvider) WriteKubeConfig(ctx context.Context, clusterId string) (st
 	pathToKubeConfig := path.Join(dirname, ".humanitec-setup-wizard", "kubeconfig")
 
 	if err = clientcmd.WriteToFile(*kubeConfig, pathToKubeConfig); err != nil {
-		return "", fmt.Errorf("failed to write kubeconfig to file, %w", err)
+		return "", fmt.Errorf("failed to write kubeconfig to file: %w", err)
 	}
 
 	return pathToKubeConfig, nil
@@ -561,25 +561,25 @@ func (a *awsProvider) getKubeConfig(ctx context.Context, clusterId string) (*api
 		Name: &clusterId,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster, %w", err)
+		return nil, fmt.Errorf("failed to describe cluster: %w", err)
 	}
 	if cluster == nil || cluster.Cluster == nil || cluster.Cluster.CertificateAuthority == nil || cluster.Cluster.Endpoint == nil {
 		return nil, fmt.Errorf("failed to describe cluster: cluster, cluster.Cluster, cluster.Cluster.CertificateAuthority or cluster.Cluster.Endpoint is nil")
 	}
 	gen, err := token.NewGenerator(true, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create token generator, %w", err)
+		return nil, fmt.Errorf("failed to create token generator: %w", err)
 	}
 	opts := &token.GetTokenOptions{
 		ClusterID: clusterId,
 	}
 	token, err := gen.GetWithOptions(opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get token, %w", err)
+		return nil, fmt.Errorf("failed to get token: %w", err)
 	}
 	ca, err := base64.StdEncoding.DecodeString(*cluster.Cluster.CertificateAuthority.Data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode certificate authority, %w", err)
+		return nil, fmt.Errorf("failed to decode certificate authority: %w", err)
 	}
 
 	kubeConfig := generateKubeConfig(*cluster.Cluster.Endpoint, token.Token, ca)
@@ -593,12 +593,12 @@ func (a *awsProvider) ListSecretManagers(ctx context.Context) ([]string, error) 
 func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.HumanitecPlatform, kubeconfig, operatorNamespace, clusterId, secretManager, humanitecSecretStoreId string) error {
 	err := a.ensureK8sClient(ctx, clusterId)
 	if err != nil {
-		return fmt.Errorf("failed to ensure k8s client, %w", err)
+		return fmt.Errorf("failed to ensure k8s client: %w", err)
 	}
 
 	accountId, err := a.getAccountId(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get calling user id, %w", err)
+		return fmt.Errorf("failed to get calling user id: %w", err)
 	}
 
 	secretsManagerPolicyResourceArn := fmt.Sprintf("arn:aws:secretsmanager:%s:%s:secret:*", a.awsConfig.Region, accountId)
@@ -609,7 +609,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	if session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN != "" {
 		isAccessSecretsManagerPolicyCreated, err := a.isPolicyExists(ctx, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
 		if err != nil {
-			return fmt.Errorf("failed to check if policy exists, %w", err)
+			return fmt.Errorf("failed to check if policy exists: %w", err)
 		}
 		if !isAccessSecretsManagerPolicyCreated {
 			message.Debug("Secret access policy not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName)
@@ -640,7 +640,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 
 		secretsManagerAccessPolicyMinified := &bytes.Buffer{}
 		if err := json.Compact(secretsManagerAccessPolicyMinified, []byte(secretsManagerAccessPolicy)); err != nil {
-			return fmt.Errorf("failed to minify secrets manager access policy, %w", err)
+			return fmt.Errorf("failed to minify secrets manager access policy: %w", err)
 		}
 
 		message.Info("Creating Secret Access Policy: aws iam create-policy --policy-name %s --policy-document '%s'", secretsManagerAccessPolicyName, secretsManagerAccessPolicyMinified.String())
@@ -649,7 +649,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 			PolicyName:     &secretsManagerAccessPolicyName,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create secret access policy, %w", err)
+			return fmt.Errorf("failed to create secret access policy: %w", err)
 		}
 		if createPolicyResp == nil || createPolicyResp.Policy == nil || createPolicyResp.Policy.Arn == nil {
 			return fmt.Errorf("failed to create secret access policy: createPolicyResp, createPolicyResp.Policy or createPolicyResp.Policy.Arn is nil")
@@ -667,7 +667,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	if session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName != "" {
 		isTrustPolicyRoleCreated, err := a.isRoleExists(ctx, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
 		if err != nil {
-			return fmt.Errorf("failed to check if role exists, %w", err)
+			return fmt.Errorf("failed to check if role exists: %w", err)
 		}
 		if !isTrustPolicyRoleCreated {
 			message.Debug("Trust policy role not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
@@ -701,7 +701,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 
 		trustPolicyMinified := &bytes.Buffer{}
 		if err := json.Compact(trustPolicyMinified, []byte(trustPolicy)); err != nil {
-			return fmt.Errorf("failed to minify trust policy, %w", err)
+			return fmt.Errorf("failed to minify trust policy: %w", err)
 		}
 
 		message.Info("Creating Trust Policy Role: aws iam create-role --role-name %s --description %s --assume-role-policy-document '%s'", trustPolicyRoleName, trustPolicyRoleDescription, trustPolicyMinified.String())
@@ -711,7 +711,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 			AssumeRolePolicyDocument: &trustPolicy,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create role, %w", err)
+			return fmt.Errorf("failed to create role: %w", err)
 		}
 		if createRoleResp == nil || createRoleResp.Role == nil || createRoleResp.Role.Arn == nil {
 			return fmt.Errorf("failed to create role: createRoleResp, createRoleResp.Role or createRoleResp.Role.Arn is nil")
@@ -728,7 +728,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 
 	isAccessSecretPolicyAttached, err := a.isPolicyAttachedToRole(ctx, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
 	if err != nil {
-		return fmt.Errorf("failed to check if policy is attached to role, %w", err)
+		return fmt.Errorf("failed to check if policy is attached to role: %w", err)
 	}
 	if !isAccessSecretPolicyAttached {
 		message.Info("Attaching policy to role: aws iam attach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
@@ -737,17 +737,26 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 			RoleName:  &session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to attach role policy, %w", err)
+			return fmt.Errorf("failed to attach role policy: %w", err)
 		}
 		message.Info("Policy %s attached to role %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
 	} else {
 		message.Info("Policy %s already attached to role %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
 	}
 
+	podIdentityAgentEnabled, err := a.isPodIdentityAgentEnabled(ctx, clusterId)
+	if err != nil {
+		return fmt.Errorf("failed to check if pod identity agent is enabled: %w", err)
+	}
+	if !podIdentityAgentEnabled {
+		return fmt.Errorf("pod identity agent is not enabled, please enable it before continuing")
+	}
+	
+
 	if session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId != "" {
 		isPodIdentityAssociationCreated, err := a.isPodIdentityAssociationExists(ctx, clusterId, session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
 		if err != nil {
-			return fmt.Errorf("failed to check if pod identity association exists, %w", err)
+			return fmt.Errorf("failed to check if pod identity association exists: %w", err)
 		}
 		if !isPodIdentityAssociationCreated {
 			message.Debug("Pod identity association not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
@@ -767,7 +776,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 			RoleArn:        &session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleARN,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create pod identity association, %w", err)
+			return fmt.Errorf("failed to create pod identity association: %w", err)
 		}
 		session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId = *createPodIdentityAssociationResp.Association.AssociationId
 		if err = session.Save(); err != nil {
@@ -799,19 +808,19 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to register secret store, %w", err)
+		return fmt.Errorf("failed to register secret store: %w", err)
 	}
 
 	err = a.restartOperatorUntilPodIsReady(ctx, kubeconfig, operatorNamespace)
 	if err != nil {
-		return fmt.Errorf("failed to restart operator deployment, %w", err)
+		return fmt.Errorf("failed to restart operator deployment: %w", err)
 	}
 	message.Info("Operator deployment restarted")
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId != "" {
 		isSecretStoreCreated, err := a.isHumanitecSecretStoreResourceCreated(ctx, session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId)
 		if err != nil {
-			return fmt.Errorf("failed to check if secret store exists, %w", err)
+			return fmt.Errorf("failed to check if secret store exists: %w", err)
 		}
 		if !isSecretStoreCreated {
 			message.Debug("Secret store not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.SecretStoreId)
@@ -832,7 +841,7 @@ func (a *awsProvider) ConfigureOperator(ctx context.Context, platform *platform.
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create secret store, %w", err)
+			return fmt.Errorf("failed to create secret store: %w", err)
 		}
 		if createSecretStore.StatusCode() != 201 {
 			return fmt.Errorf("humanitec returned unexpected status code: %d with body %s", createSecretStore.StatusCode(), string(createSecretStore.Body))
@@ -853,7 +862,7 @@ func (a *awsProvider) restartOperatorUntilPodIsReady(ctx context.Context, kubeco
 	message.Info("Restarting operator deployment")
 	err := cluster.RestartOperatorDeployment(ctx, kubeconfig, namespace)
 	if err != nil {
-		return fmt.Errorf("failed to restart operator deployment, %w", err)
+		return fmt.Errorf("failed to restart operator deployment: %w", err)
 	}
 
 	timeout := time.After(5 * time.Minute)
@@ -867,7 +876,7 @@ mainLoop:
 		case <-tick:
 			deployment, err := a.k8sClient.AppsV1().Deployments(namespace).Get(ctx, "humanitec-operator-controller-manager", k8s_meta.GetOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to get operator deployment, %w", err)
+				return fmt.Errorf("failed to get operator deployment: %w", err)
 			}
 
 			if deployment.Status.Replicas != *deployment.Spec.Replicas {
@@ -877,14 +886,14 @@ mainLoop:
 
 			selector, err := k8s_meta.LabelSelectorAsSelector(deployment.Spec.Selector)
 			if err != nil {
-				return fmt.Errorf("failed to get operator deployment selector, %w", err)
+				return fmt.Errorf("failed to get operator deployment selector: %w", err)
 			}
 
 			pods, err := a.k8sClient.CoreV1().Pods(namespace).List(ctx, k8s_meta.ListOptions{
 				LabelSelector: selector.String(),
 			})
 			if err != nil {
-				return fmt.Errorf("failed to list operator pods, %w", err)
+				return fmt.Errorf("failed to list operator pods: %w", err)
 			}
 
 			if a.isOperatorPodReady(*pods) {
@@ -893,7 +902,7 @@ mainLoop:
 
 			err = cluster.RestartOperatorDeployment(ctx, kubeconfig, namespace)
 			if err != nil {
-				return fmt.Errorf("failed to restart operator deployment, %w", err)
+				return fmt.Errorf("failed to restart operator deployment: %w", err)
 			}
 		}
 	}
@@ -938,7 +947,7 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 	if session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId != "" {
 		isPodIdentityAssociationCreated, err := a.isPodIdentityAssociationExists(ctx, clusterId, session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
 		if err != nil {
-			return fmt.Errorf("failed to check if pod identity association exists, %w", err)
+			return fmt.Errorf("failed to check if pod identity association exists: %w", err)
 		}
 		if !isPodIdentityAssociationCreated {
 			message.Debug("Pod identity association not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
@@ -950,7 +959,7 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 			message.Info("Pod identity association will be deleted: aws eks delete-pod-identity-association --cluster-name %s --association-id %s", clusterId, session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
 			answer, err := message.BoolSelect("Proceed?")
 			if err != nil {
-				return fmt.Errorf("failed to select answer, %w", err)
+				return fmt.Errorf("failed to select answer: %w", err)
 			}
 			if answer {
 				_, err = eksClient.DeletePodIdentityAssociation(ctx, &eks.DeletePodIdentityAssociationInput{
@@ -958,7 +967,7 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 					ClusterName:   &clusterId,
 				})
 				if err != nil {
-					return fmt.Errorf("failed to delete pod identity association, %w", err)
+					return fmt.Errorf("failed to delete pod identity association: %w", err)
 				}
 				message.Info("Pod identity association deleted: %s", session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId)
 				session.State.AwsProvider.ConfigureOperatorAccess.PodIdentityAssociationId = ""
@@ -972,34 +981,36 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 
 	}
 
-	isAccessSecretPolicyAttached, err := a.isPolicyAttachedToRole(ctx, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
-	if err != nil {
-		return fmt.Errorf("failed to check if policy is attached to role, %w", err)
-	}
-	if isAccessSecretPolicyAttached {
-		message.Info("Policy will be detached from role: aws iam detach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
-		answer, err := message.BoolSelect("Proceed?")
+	if session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN != "" && session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName != "" {
+		isAccessSecretPolicyAttached, err := a.isPolicyAttachedToRole(ctx, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
 		if err != nil {
-			return fmt.Errorf("failed to select answer, %w", err)
+			return fmt.Errorf("failed to check if policy is attached to role: %w", err)
 		}
-		if answer {
-			_, err = iamClient.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{
-				PolicyArn: &session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN,
-				RoleName:  &session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName,
-			})
+		if isAccessSecretPolicyAttached {
+			message.Info("Policy will be detached from role: aws iam detach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
+			answer, err := message.BoolSelect("Proceed?")
 			if err != nil {
-				return fmt.Errorf("failed to detach role policy, %w", err)
+				return fmt.Errorf("failed to select answer: %w", err)
 			}
-			message.Info("Policy %s detached from role %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
-		} else {
-			message.Info("Skipping detachment of the policy %s from role %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+			if answer {
+				_, err = iamClient.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{
+					PolicyArn: &session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN,
+					RoleName:  &session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to detach role policy: %w", err)
+				}
+				message.Info("Policy %s detached from role %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+			} else {
+				message.Info("Skipping detachment of the policy %s from role %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
+			}
 		}
 	}
 
 	if session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName != "" {
 		isTrustPolicyRoleCreated, err := a.isRoleExists(ctx, session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
 		if err != nil {
-			return fmt.Errorf("failed to check if role exists, %w", err)
+			return fmt.Errorf("failed to check if role exists: %w", err)
 		}
 		if !isTrustPolicyRoleCreated {
 			message.Debug("Trust policy role not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
@@ -1012,14 +1023,14 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 			message.Info("Trust policy role will be deleted: aws iam delete-role --role-name %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
 			answer, err := message.BoolSelect("Proceed?")
 			if err != nil {
-				return fmt.Errorf("failed to select answer, %w", err)
+				return fmt.Errorf("failed to select answer: %w", err)
 			}
 			if answer {
 				_, err = iamClient.DeleteRole(ctx, &iam.DeleteRoleInput{
 					RoleName: &session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName,
 				})
 				if err != nil {
-					return fmt.Errorf("failed to delete role, %w", err)
+					return fmt.Errorf("failed to delete role: %w", err)
 				}
 				message.Info("Trust policy role deleted: %s", session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName)
 				session.State.AwsProvider.ConfigureOperatorAccess.TrustPolicyRoleName = ""
@@ -1036,7 +1047,7 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 	if session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN != "" {
 		isAccessSecretsManagerPolicyCreated, err := a.isPolicyExists(ctx, session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
 		if err != nil {
-			return fmt.Errorf("failed to check if policy exists, %w", err)
+			return fmt.Errorf("failed to check if policy exists: %w", err)
 		}
 		if !isAccessSecretsManagerPolicyCreated {
 			message.Debug("Secret access policy not found: %s, clearing state", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName)
@@ -1049,14 +1060,14 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 			message.Info("Access policy will be deleted: aws iam delete-policy --policy-arn %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN)
 			answer, err := message.BoolSelect("Proceed?")
 			if err != nil {
-				return fmt.Errorf("failed to select answer, %w", err)
+				return fmt.Errorf("failed to select answer: %w", err)
 			}
 			if answer {
 				_, err = iamClient.DeletePolicy(ctx, &iam.DeletePolicyInput{
 					PolicyArn: &session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyARN,
 				})
 				if err != nil {
-					return fmt.Errorf("failed to delete policy, %w", err)
+					return fmt.Errorf("failed to delete policy: %w", err)
 				}
 				message.Info("Access policy deleted: %s", session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName)
 				session.State.AwsProvider.ConfigureOperatorAccess.AccessSecretsManagerPolicyName = ""
@@ -1070,58 +1081,62 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 		}
 	}
 
-	isAccessEntryCreated, err := a.isAccessEntryExists(ctx, clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
-	if err != nil {
-		return fmt.Errorf("failed to check if access entry exists, %w", err)
-	}
-	if isAccessEntryCreated {
-		message.Info("Access entry will be deleted: aws eks delete-access-entry --cluster-name %s --principal-arn %s", clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
-		answer, err := message.BoolSelect("Proceed?")
+	if session.State.AwsProvider.CreateCloudIdentity.RoleArn != "" {
+		isAccessEntryCreated, err := a.isAccessEntryExists(ctx, clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
 		if err != nil {
-			return fmt.Errorf("failed to select answer, %w", err)
+			return fmt.Errorf("failed to check if access entry exists: %w", err)
 		}
-		if answer {
-			_, err = eksClient.DeleteAccessEntry(ctx, &eks.DeleteAccessEntryInput{
-				ClusterName:  &clusterId,
-				PrincipalArn: &session.State.AwsProvider.CreateCloudIdentity.RoleArn,
-			})
+		if isAccessEntryCreated {
+			message.Info("Access entry will be deleted: aws eks delete-access-entry --cluster-name %s --principal-arn %s", clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+			answer, err := message.BoolSelect("Proceed?")
 			if err != nil {
-				return fmt.Errorf("failed to delete access entry, %w", err)
+				return fmt.Errorf("failed to select answer: %w", err)
 			}
-			message.Info("Access Entry to cluster %s deleted for %s", clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
-		} else {
-			message.Info("Skipping deletion of the access entry: %s", session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+			if answer {
+				_, err = eksClient.DeleteAccessEntry(ctx, &eks.DeleteAccessEntryInput{
+					ClusterName:  &clusterId,
+					PrincipalArn: &session.State.AwsProvider.CreateCloudIdentity.RoleArn,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to delete access entry: %w", err)
+				}
+				message.Info("Access Entry to cluster %s deleted for %s", clusterId, session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+			} else {
+				message.Info("Skipping deletion of the access entry: %s", session.State.AwsProvider.CreateCloudIdentity.RoleArn)
+			}
 		}
 	}
 
-	isPolicyAttached, err := a.isPolicyAttachedToRole(ctx, session.State.AwsProvider.CreateCloudIdentity.RoleName, session.State.AwsProvider.ConnectCluster.PolicyArn)
-	if err != nil {
-		return fmt.Errorf("failed to check if policy is attached to role, %w", err)
-	}
-	if isPolicyAttached {
-		message.Info("Policy will be detached from role: aws iam detach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.CreateCloudIdentity.RoleName, session.State.AwsProvider.ConnectCluster.PolicyArn)
-		answer, err := message.BoolSelect("Proceed?")
+	if session.State.AwsProvider.CreateCloudIdentity.RoleName != "" && session.State.AwsProvider.ConnectCluster.PolicyArn != "" {
+		isPolicyAttached, err := a.isPolicyAttachedToRole(ctx, session.State.AwsProvider.CreateCloudIdentity.RoleName, session.State.AwsProvider.ConnectCluster.PolicyArn)
 		if err != nil {
-			return fmt.Errorf("failed to select answer, %w", err)
+			return fmt.Errorf("failed to check if policy is attached to role: %w", err)
 		}
-		if answer {
-			_, err = iamClient.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{
-				PolicyArn: &session.State.AwsProvider.ConnectCluster.PolicyArn,
-				RoleName:  &session.State.AwsProvider.CreateCloudIdentity.RoleName,
-			})
+		if isPolicyAttached {
+			message.Info("Policy will be detached from role: aws iam detach-role-policy --role-name %s --policy-arn %s", session.State.AwsProvider.CreateCloudIdentity.RoleName, session.State.AwsProvider.ConnectCluster.PolicyArn)
+			answer, err := message.BoolSelect("Proceed?")
 			if err != nil {
-				return fmt.Errorf("failed to detach role policy, %w", err)
+				return fmt.Errorf("failed to select answer: %w", err)
 			}
-			message.Info("Policy %s detached from role %s", session.State.AwsProvider.ConnectCluster.PolicyName, session.State.AwsProvider.CreateCloudIdentity.RoleName)
-		} else {
-			message.Info("Skipping detachment of the policy %s from role %s", session.State.AwsProvider.ConnectCluster.PolicyName, session.State.AwsProvider.CreateCloudIdentity.RoleName)
+			if answer {
+				_, err = iamClient.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{
+					PolicyArn: &session.State.AwsProvider.ConnectCluster.PolicyArn,
+					RoleName:  &session.State.AwsProvider.CreateCloudIdentity.RoleName,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to detach role policy: %w", err)
+				}
+				message.Info("Policy %s detached from role %s", session.State.AwsProvider.ConnectCluster.PolicyName, session.State.AwsProvider.CreateCloudIdentity.RoleName)
+			} else {
+				message.Info("Skipping detachment of the policy %s from role %s", session.State.AwsProvider.ConnectCluster.PolicyName, session.State.AwsProvider.CreateCloudIdentity.RoleName)
+			}
 		}
 	}
 
 	if session.State.AwsProvider.CreateCloudIdentity.RoleName != "" {
 		isRoleExists, err := a.isRoleExists(ctx, session.State.AwsProvider.CreateCloudIdentity.RoleName)
 		if err != nil {
-			return fmt.Errorf("failed to check if role exists, %w", err)
+			return fmt.Errorf("failed to check if role exists: %w", err)
 		}
 		if !isRoleExists {
 			message.Debug("AWS Role not found: %s, clearing state", session.State.AwsProvider.CreateCloudIdentity.RoleName)
@@ -1133,14 +1148,14 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 			message.Info("Role will be deleted: aws iam delete-role --role-name %s", session.State.AwsProvider.CreateCloudIdentity.RoleName)
 			answer, err := message.BoolSelect("Proceed?")
 			if err != nil {
-				return fmt.Errorf("failed to select answer, %w", err)
+				return fmt.Errorf("failed to select answer: %w", err)
 			}
 			if answer {
 				_, err = iamClient.DeleteRole(ctx, &iam.DeleteRoleInput{
 					RoleName: &session.State.AwsProvider.CreateCloudIdentity.RoleName,
 				})
 				if err != nil {
-					return fmt.Errorf("failed to delete role, %w", err)
+					return fmt.Errorf("failed to delete role: %w", err)
 				}
 				message.Info("AWS Role deleted: %s", session.State.AwsProvider.CreateCloudIdentity.RoleName)
 				session.State.AwsProvider.CreateCloudIdentity.RoleName = ""
@@ -1156,7 +1171,7 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 	if session.State.AwsProvider.ConnectCluster.PolicyArn != "" {
 		isPolicyExists, err := a.isPolicyExists(ctx, session.State.AwsProvider.ConnectCluster.PolicyArn)
 		if err != nil {
-			return fmt.Errorf("failed to check if policy exists, %w", err)
+			return fmt.Errorf("failed to check if policy exists: %w", err)
 		}
 		if !isPolicyExists {
 			message.Debug("AWS Policy not found: %s, clearing state", session.State.AwsProvider.ConnectCluster.PolicyArn)
@@ -1168,14 +1183,14 @@ func (a *awsProvider) CleanState(ctx context.Context) error {
 			message.Info("Policy will be deleted: aws iam delete-policy --policy-arn %s", session.State.AwsProvider.ConnectCluster.PolicyArn)
 			answer, err := message.BoolSelect("Proceed?")
 			if err != nil {
-				return fmt.Errorf("failed to select answer, %w", err)
+				return fmt.Errorf("failed to select answer: %w", err)
 			}
 			if answer {
 				_, err = iamClient.DeletePolicy(ctx, &iam.DeletePolicyInput{
 					PolicyArn: &session.State.AwsProvider.ConnectCluster.PolicyArn,
 				})
 				if err != nil {
-					return fmt.Errorf("failed to delete policy, %w", err)
+					return fmt.Errorf("failed to delete policy: %w", err)
 				}
 				message.Info("AWS Policy deleted: %s", session.State.AwsProvider.ConnectCluster.PolicyArn)
 				session.State.AwsProvider.ConnectCluster.PolicyArn = ""
@@ -1195,7 +1210,7 @@ func (a *awsProvider) getAccountId(ctx context.Context) (string, error) {
 	stsClient := sts.NewFromConfig(a.awsConfig)
 	caller, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		return "", fmt.Errorf("failed to get caller identity, %w", err)
+		return "", fmt.Errorf("failed to get caller identity: %w", err)
 	}
 	if caller == nil || caller.Account == nil {
 		return "", fmt.Errorf("failed to get caller identity: caller or caller.UserId is nil")
@@ -1213,7 +1228,7 @@ func (a *awsProvider) isRoleExists(ctx context.Context, roleName string) (bool, 
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchEntity" {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to get role, %w", err)
+		return false, fmt.Errorf("failed to get role: %w", err)
 	}
 	return true, nil
 }
@@ -1228,7 +1243,7 @@ func (a *awsProvider) isPolicyExists(ctx context.Context, policyArn string) (boo
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchEntity" {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to get policy, %w", err)
+		return false, fmt.Errorf("failed to get policy: %w", err)
 	}
 	return true, nil
 }
@@ -1239,7 +1254,7 @@ func (a *awsProvider) isPolicyAttachedToRole(ctx context.Context, roleName, poli
 		RoleName: &roleName,
 	})
 	if err != nil {
-		return false, fmt.Errorf("failed to list attached role policies, %w", err)
+		return false, fmt.Errorf("failed to list attached role policies: %w", err)
 	}
 	for _, attachedPolicy := range listPoliciesResp.AttachedPolicies {
 		if *attachedPolicy.PolicyArn == policyArn {
@@ -1260,9 +1275,28 @@ func (a *awsProvider) isAccessEntryExists(ctx context.Context, clusterName, prin
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "ResourceNotFoundException" {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to describe access entry, %w", err)
+		return false, fmt.Errorf("failed to describe access entry: %w", err)
 	}
 	return true, nil
+}
+
+func (a *awsProvider) isPodIdentityAgentEnabled(ctx context.Context, clusterName string) (bool, error) {
+	eksClient := eks.NewFromConfig(a.awsConfig)
+	listAddonsResp, err := eksClient.ListAddons(ctx, &eks.ListAddonsInput{
+		ClusterName: &clusterName,
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to list addons: %w", err)
+	}
+	if listAddonsResp == nil || listAddonsResp.Addons == nil {
+		return false, fmt.Errorf("failed to list addons: listAddonsResp or listAddonsResp.Addons is nil")
+	}
+	for _, addon := range listAddonsResp.Addons {
+		if addon == "eks-pod-identity-agent" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (a *awsProvider) isPodIdentityAssociationExists(ctx context.Context, clusterName, associationId string) (bool, error) {
@@ -1276,7 +1310,7 @@ func (a *awsProvider) isPodIdentityAssociationExists(ctx context.Context, cluste
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFoundException" {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to describe pod identity association, %w", err)
+		return false, fmt.Errorf("failed to describe pod identity association: %w", err)
 	}
 	return true, nil
 }
@@ -1284,7 +1318,7 @@ func (a *awsProvider) isPodIdentityAssociationExists(ctx context.Context, cluste
 func (a *awsProvider) isHumanitecResourceExists(ctx context.Context, resourceId string) (bool, error) {
 	resp, err := a.humanitecPlatform.Client.GetResourceDefinitionWithResponse(ctx, a.humanitecPlatform.OrganizationId, resourceId, &client.GetResourceDefinitionParams{})
 	if err != nil {
-		return false, fmt.Errorf("failed to get resource definition, %w", err)
+		return false, fmt.Errorf("failed to get resource definition: %w", err)
 	}
 	if resp.StatusCode() == 404 {
 		return false, nil
@@ -1298,7 +1332,7 @@ func (a *awsProvider) isHumanitecResourceExists(ctx context.Context, resourceId 
 func (a *awsProvider) isHumanitecSecretStoreResourceCreated(ctx context.Context, secretStoreId string) (bool, error) {
 	resp, err := a.humanitecPlatform.Client.GetOrgsOrgIdSecretstoresStoreIdWithResponse(ctx, a.humanitecPlatform.OrganizationId, secretStoreId)
 	if err != nil {
-		return false, fmt.Errorf("failed to get secret store, %w", err)
+		return false, fmt.Errorf("failed to get secret store: %w", err)
 	}
 	if resp.StatusCode() == 404 {
 		return false, nil

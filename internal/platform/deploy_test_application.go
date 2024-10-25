@@ -87,7 +87,7 @@ func setToDeltaRequest(set *client.WorkloadArtefactVersionDeploymentSet, envID s
 	for n, m := range set.Modules {
 		mr := &client.ModuleRequest{}
 		if err := utils.ReEncode(m, &mr); err != nil {
-			return nil, fmt.Errorf("failed to reencode module: %s, %w", n, err)
+			return nil, fmt.Errorf("failed to reencode module: %s: %w", n, err)
 		}
 
 		add[n] = mr
@@ -96,7 +96,7 @@ func setToDeltaRequest(set *client.WorkloadArtefactVersionDeploymentSet, envID s
 	for n, m := range set.Shared {
 		var value interface{}
 		if err := utils.ReEncode(m, &value); err != nil {
-			return nil, fmt.Errorf("failed to reencode shared: %s, %w", n, err)
+			return nil, fmt.Errorf("failed to reencode shared: %s: %w", n, err)
 		}
 
 		operation := "add"
