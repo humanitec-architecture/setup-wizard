@@ -129,6 +129,9 @@ var connectCmd = &cobra.Command{
 			message.Success("Humanitec Agent already installed")
 		}
 		if isAgentInstalled {
+			if err = cluster.WaitForReadyDeployment(ctx, kubeConfigPath, cluster.AgentNamespace, "humanitec-agent"); err != nil {
+				return fmt.Errorf("agent deployment is not ready: %w", err)
+			}
 			if err = addAgentToClusterDefinition(ctx, humanitecPlatform, humanitecClusterId); err != nil {
 				return fmt.Errorf("failed to update cluster resource definition with agent: %w", err)
 			}
@@ -304,6 +307,10 @@ func installOperator(ctx context.Context, humanitecPlatform *platform.HumanitecP
 		if err != nil {
 			return fmt.Errorf("failed to install operator: %w", err)
 		}
+	}
+
+	if err = cluster.WaitForReadyDeployment(ctx, kubeconfig, operatorNamespace, "humanitec-operator-controller-manager"); err != nil {
+		return fmt.Errorf("operator deployment is not ready: %w", err)
 	}
 
 	if err := cluster.ConfigureDriverAuth(ctx, kubeconfig, operatorNamespace, humanitecPlatform); err != nil {
