@@ -76,15 +76,17 @@ To clean up resources created through previous runs of the Wizard, run:
 
 Note that, because the state is stored locally, this command needs to be executed on the same system which previously ran the wizard.
 
-## AWS Authentication
+## AWS Provider Documentation
+
+### AWS Authentication
 
 The wizard requires AWS credentials to connect your AWS cloud infrastructure.
 
-### Using Default AWS CLI Profile
+#### Using Default AWS CLI Profile
 
 If you have already configured the AWS CLI with a default profile, the wizard will automatically detect and use it.
 
-### Using a Specific AWS Profile
+#### Using a Specific AWS Profile
 
 You can specify a different AWS profile by setting the `AWS_PROFILE` environment variable:
 
@@ -92,7 +94,7 @@ You can specify a different AWS profile by setting the `AWS_PROFILE` environment
 export AWS_PROFILE=your_profile_name
 ```
 
-### Using Environment Variables
+#### Using Environment Variables
 
 You can also provide AWS credentials directly through environment variables:
 
@@ -142,6 +144,13 @@ The following AWS permissions are required for humanitec-setup-wizard to success
 These permissions allow the wizard to perform necessary actions such as creating roles, managing policies, and interacting with EKS clusters.
 
 In addition, to install the Humanitec operator and/or agent, you will need deploy permissions access to the cluster you want to connect to Humanitec.
+
+### Cluster and Project pre-requisites
+
+The CLI wizard assumes that:
+
+- In the target cluster an [Ingress Controller](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is available
+- The [Amazon EKS Pod Identity Agent](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html) is enabled in the selected cluster
 
 ## GCP Provider Documentation
 
