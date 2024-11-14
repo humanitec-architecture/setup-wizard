@@ -11,6 +11,7 @@ import (
 
 type HumanitecPlatform struct {
 	OrganizationId string
+	Token          string
 	Client         *humanitec.Client
 }
 
@@ -26,7 +27,7 @@ func NewHumanitecPlatform(token string) (*HumanitecPlatform, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create humanitec client: %w", err)
 	}
-	return &HumanitecPlatform{Client: humClient}, nil
+	return &HumanitecPlatform{Client: humClient, Token: token}, nil
 }
 
 type CatchExpiredHumanitecToken struct {
