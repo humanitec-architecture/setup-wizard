@@ -30,7 +30,7 @@ var cleanCmd = &cobra.Command{
 			return fmt.Errorf("failed to load session: %v", err)
 		}
 
-		humanitecPlatform, err := initializeHumanitecPlatform(ctx)
+		humanitecPlatform, err := initializeHumanitecPlatformAndSaveSession(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to initialize humanitec platform: %w", err)
 		}
@@ -511,7 +511,7 @@ func deleteResourceDefinition(ctx context.Context, humanitecPlatform *platform.H
 		return fmt.Errorf("failed to delete resource definition: %w", err)
 	}
 	if defResp.StatusCode() != http.StatusOK && defResp.StatusCode() != http.StatusNoContent && defResp.StatusCode() != http.StatusNotFound {
-		return fmt.Errorf("failed to delete resource definition, status code: %d", resp.StatusCode())
+		return fmt.Errorf("failed to delete resource definition, status code: %d with body: %s", defResp.StatusCode(), string(defResp.Body))
 	}
 	return nil
 }

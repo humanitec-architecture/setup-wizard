@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
-	"os"
-	"path"
 
 	"github.com/humanitec/humanitec-go-autogen/client"
 	"github.com/spf13/cobra"
@@ -52,7 +50,7 @@ var connectCmd = &cobra.Command{
 			return fmt.Errorf("failed to load session: %v", err)
 		}
 
-		humanitecPlatform, err := initializeHumanitecPlatform(ctx)
+		humanitecPlatform, err := initializeHumanitecPlatformAndSaveSession(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to initialize humanitec platform: %w", err)
 		}
@@ -164,7 +162,7 @@ Deployments involving these entities will not work anymore proceeding with the W
 		message.Success("Humanitec Operator installed")
 
 		message.DocumentationReference(
-			"Humanitec Terraform Driver allows to execute Terraform scripts in a target cluster.",
+			"Humanitec Terraform Driver allows you to execute Terraform scripts in a target cluster.",
 			"https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform/#running-the-terraform-runner-in-a-target-cluster",
 		)
 		if err = createResourcesForTerraformRunnerExecution(ctx, provider, humanitecPlatform); err != nil {
@@ -568,80 +566,16 @@ func getCluster(ctx context.Context, provider cloud.Provider) (string, error) {
 	return clusterId, nil
 }
 
-func initializeHumanitecPlatform(ctx context.Context) (*platform.HumanitecPlatform, error) {
-	var humanitecToken string
-
-	dirname, err := os.UserHomeDir()
+func initializeHumanitecPlatformAndSaveSession(ctx context.Context) (*platform.HumanitecPlatform, error) {
+	humanitecPlaform, err := initializeHumanitecPlatform(ctx, session.State.Application.Connect.HumanitecOrganizationId)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user home directory: %w", err)
+		return nil, fmt.Errorf("failed to initialize humanitec platform: %w", err)
 	}
-
-	configFile, err := os.ReadFile(path.Join(dirname, ".humctl"))
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("failed to read config file: %w", err)
-		}
-	} else {
-		var config struct {
-			HumanitecToken string `yaml:"token"`
-		}
-		if err := yaml.Unmarshal(configFile, &config); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal config file: %w", err)
-		}
-		humanitecToken = config.HumanitecToken
-	}
-
-	if humanitecToken == "" {
-		humanitecToken, err = message.Prompt("Enter your Humanitec Token", "")
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		message.Debug("Using Humanitec Token from config file")
-	}
-
-	platform, err := platform.NewHumanitecPlatform(humanitecToken)
-	if err != nil {
-		return nil, err
-	}
-
-	var organizationId string
-	if session.State.Application.Connect.HumanitecOrganizationId != "" {
-		organizationId = session.State.Application.Connect.HumanitecOrganizationId
-		message.Info("Using organization from previous session: %s", organizationId)
-	} else {
-		organizationsResp, err := platform.Client.ListOrganizationsWithResponse(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if organizationsResp.StatusCode() != 200 {
-			return nil, fmt.Errorf("humanitec returned unexpected status code: %d with body %s", organizationsResp.StatusCode(), string(organizationsResp.Body))
-		}
-
-		organizations := *organizationsResp.JSON200
-		if len(organizations) == 0 {
-			return nil, fmt.Errorf("no organizations found")
-		}
-		if len(organizations) == 1 {
-			organizationId = organizations[0].Id
-			message.Debug("Only one organization found. Using: %s", platform.OrganizationId)
-		} else {
-			ids := make([]string, len(organizations))
-			for i, org := range organizations {
-				ids[i] = org.Id
-			}
-			organizationId, err = message.Select("Select organization", ids)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	platform.OrganizationId = organizationId
-	session.State.Application.Connect.HumanitecOrganizationId = organizationId
+	session.State.Application.Connect.HumanitecOrganizationId = humanitecPlaform.OrganizationId
 	if err := session.Save(); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
-	return platform, nil
+	return humanitecPlaform, nil
 }
 
 func selectCloudProvider(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform) (cloud.Provider, error) {
