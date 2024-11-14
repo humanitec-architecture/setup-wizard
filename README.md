@@ -1,14 +1,39 @@
-# Humanitec setup wizard
+# Humanitec Setup Wizard
 
-`humanitec-setup-wizard` is a CLI wizard designed to help users easily connect their existing cloud infrastructure to [Humanitec](https://humanitec.com/). Written in Go, this tool is lightweight and does not require any additional dependencies, making it quick and easy to set up and use.
+`humanitec-setup-wizard` is a CLI wizard designed to help you easily connect your existing cloud infrastructure to the [Humanitec Platform Orchestrator](https://developer.humanitec.com/platform-orchestrator/overview).
+
+Given a [Humanitec organization](https://developer.humanitec.com/concepts/organizations/) and an existing Kubernetes cluster, the wizard will do the following:
+  - Connect your [cloud account](https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/overview/) to Humanitec
+  - Create and configure [resource definitions](https://developer.humanitec.com/platform-orchestrator/resources/resource-definitions/) for:
+  - A [Kubernetes cluster](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/)
+- Configure a secret store for [secret references](https://developer.humanitec.com/platform-orchestrator/security/secret-references/)
+- Configure infrastructure & resource definitions required for a [Terraform Runner](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/)
+- Create a test application, with a resource graph similar to this:
+  ![Resource graph depicting a simple running workload](images/wizard-sample-app-resource-graph-aws.png)
+
+By default, the wizard will install the following on your Kubernetes cluster, creating a dedicated namespace for each:
+- [Humanitec Agent](https://developer.humanitec.com/integration-and-extensions/humanitec-agent/overview/): a secure and easy-to-administer way for the Orchestrator to access private endpoints in your infrastructure.
+- [Humanitec Operator](https://developer.humanitec.com/integration-and-extensions/humanitec-operator/overview/): a Kubernetes operator that controls deployments made with the Orchestrator, capable of and responsible for provisioning the required secret resources in the cluster.
+
+By default, the wizard will create the following resources in your cloud infrastructure, if they do not exist:
+- Identity and access resources to connect the cluster to Humanitec, as well as resources required to use temporary credentials for the cloud account (specifics vary by provider)
+- A secret store (in the Platform Orchestrator)
+- To allow the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/) execute the Terraform code in the specified cluster:
+  - A Kubernetes Namespace where the Terraform Runner runs
+  - A Kubernetes Service Account with which the Terraform Runner runs
+  - A Kubernetes Role bound to the Terraform Runner Service Account that enables it to deal with the needed resources.
+
+After successfully running the wizard, you will have a configured and working application in the Platform Orchestrator. You can reuse many aspects of its configuration to add other applications to Humanitec. As a suggested next step, check out our [in-cluster resource packs](https://developer.humanitec.com/examples/resource-packs/?cloud=in-cluster).
+
+This tool supports infrastructure hosted in AWS, Azure, and Google Cloud. To set up Humanitec in other environments, please [reach out to our support team](https://developer.humanitec.com/support/contact/).
 
 ## Prerequisites
 
-- Go 1.22.5 or later (for building from source)
-- Cloud account (AWS, Azure, Google Cloud) with appropriate permissions and the local cloud CLI (`aws`, `az`, or `gcloud`) authenticated
-- Kubernetes cluster in your target cloud with API server endpoint accessible from your shell
-- Humanitec account
-- Humanitec’s CLI, `humctl`: https://developer.humanitec.com/platform-orchestrator/cli/
+- A cloud account with appropriate permissions and the local cloud CLI (`aws`, `az`, or `gcloud`) authenticated
+- A Kubernetes cluster in your target cloud with its API server endpoint accessible from your shell
+- (optional) A secret store in your target cloud. Can be one of AWS Secrets Manager, Azure Key Vault, or Google Cloud Secret Manager
+- A Humanitec account with Administrator permissions
+- `humctl`, the Humanitec CLI: https://developer.humanitec.com/platform-orchestrator/cli/
 
     If you prefer not to use `humctl`, the wizard will prompt you to provide your Humanitec API token directly during the setup process. See our [Authentication documentation](https://developer.humanitec.com/platform-orchestrator/reference/api-references/#authentication) for specifics.
 
@@ -35,14 +60,16 @@
 
 ### Install from source
 
-1. Clone the repository:
+_Requires go 1.22.5 or later._
+
+1. Clone this repository:
 
     ```bash
     git clone https://github.com/humanitec-architecture/setup-wizard.git
     cd setup-wizard
     ```
 
-2. Build the CLI tool:
+2. Build the CLI wizard:
 
     ```bash
     go build -o humanitec-setup-wizard
@@ -58,7 +85,7 @@ Log in to Humanitec using `humctl`:
 humctl login
 ```
 
-To start the wizard, simply run:
+Run the wizard:
 
 ```bash
 ./humanitec-setup-wizard connect
@@ -68,17 +95,25 @@ The wizard will guide you through the process of connecting your cloud infrastru
 
 ## Cleaning up
 
-To clean up resources created through previous runs of the Wizard, run:
+To clean up resources created through previous runs of the wizard, run:
 
 ```bash
 ./humanitec-setup-wizard clean
 ```
 
-Note that, because the state is stored locally, this command needs to be executed on the same system which previously ran the wizard.
+As state is stored locally, the `clean` command must be executed on the same system which previously ran the wizard.
 
-## AWS Provider Documentation
+## Applying resource pack definitions
 
-### AWS Authentication
+To automatically install the in-cluster resource definitions described in this [resource pack](https://github.com/humanitec-architecture/resource-packs-in-cluster), run:
+
+```bash
+./humanitec-setup-wizard install-resource-pack
+```
+
+## Provider Documentation: AWS
+
+### Authentication
 
 The wizard requires AWS credentials to connect your AWS cloud infrastructure.
 
@@ -143,16 +178,20 @@ The following AWS permissions are required for humanitec-setup-wizard to success
 
 These permissions allow the wizard to perform necessary actions such as creating roles, managing policies, and interacting with EKS clusters.
 
-In addition, to install the Humanitec operator and/or agent, you will need deploy permissions access to the cluster you want to connect to Humanitec.
+In addition, to install the Humanitec Operator and/or Agent, you will need deploy permissions access to the cluster you want to connect to Humanitec.
 
-### Cluster and Project pre-requisites
+### Cluster and Project Prerequisites
 
 The CLI wizard assumes that:
 
 - In the target cluster an [Ingress Controller](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is available
 - The [Amazon EKS Pod Identity Agent](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html) is enabled in the selected cluster
 
-## GCP Provider Documentation
+### TODO Resources Created
+
+XXX TODO XXX
+
+## Provider Documentation: GCP
 
 ### Authentication
 
@@ -169,7 +208,7 @@ The [Service Account impersonated by the Application Default Credentials](https:
 - roles/iam.roleAdmin
 - roles/resourcemanager.projectIamAdmin
 
-### Cluster and Project pre-requisites
+### Cluster and Project Prerequisites
 
 The CLI wizard assumes that:
 
@@ -179,30 +218,26 @@ The CLI wizard assumes that:
 
 ### Resources Created
 
-During the execution of the CLI wizard, the following GCP / Kubernetes resources will be created:
+During the execution of the wizard, the following resources resources will be created in  GCP / Kubernetes:
 
-- To perform [GCP Service account impersonation](https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/gcp/#gcp-service-account-impersonation), the CLI wizard creates:
+- To perform [GCP Service account impersonation](https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/gcp/#gcp-service-account-impersonation):
   - A Workload Identity Pool and a Workload Identity Provider
   - An IAM Service Account which will be impersonated by Humanitec
   - A Policy binding between the IAM Service Account and the Workload Identity Federation
-- To [connect a GKE Cluster](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#gke) via Kubernetes Cluster role + IAM cluster access custom role, the CLI wizard creates:
+- To [connect a GKE Cluster](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#gke) via Kubernetes Cluster role + IAM cluster access custom role:
   - An IAM Custom Role that is assigned to the IAM Service Account impersonated by Humanitec
   - A Kubernetes Cluster Role on the target cluster, which is bound to the IAM Service Account impersonated by Humanitec
   - A [GKE Cluster Humanitec Resource Definition](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#3-create-a-gke-resource-definition)
-- To let the [Terraform Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform) execute the Terraform code in the [specified cluster](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform/#running-the-terraform-runner-in-a-target-cluster):
-  - A Kubernetes Namespace where the Terraform Runner runs
-  - A Kubernetes Service Account the Terraform Runner runs with
-  - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources.
 
 The CLI wizard outputs the name of every GCP resources generated and stores them in the state session.
 
 To remove the resources created, see [cleaning up](#cleaning-up).
 
-## Azure Provider Documentation
+## Provider Documentation: Azure
 
 ### Authentication
 
-The CLI wizard requires a user to be authenticated to Azure. The common way is to use [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/authenticate-azure-cli) for this.
+The CLI wizard requires you to be authenticated to Azure. The common way is to use [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/authenticate-azure-cli) for this.
 
 ### Minimum Required Azure Permissions
 
@@ -210,16 +245,16 @@ The Service Principle running the wizard should have the following Azure/Entra I
 
 - Azure User Access Administrator
 - Azure Kubernetes Service Cluster User
-- Entra ID Privileged Role Administrator 
+- Entra ID Privileged Role Administrator
 
 Also, there should be sufficient RBAC permissions in the AKS cluster to install Operator and Agent helm charts and create `ClusterRole` and `ClusterRoleBinding`.
 
-### Cluster and Project pre-requisites
+### Cluster and Project Prerequisites
 
 The CLI wizard assumes that:
 
 - In the target cluster an [Ingress Controller](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is available
-- [Azure Key Vault](https://learn.microsoft.com/en-us/azure/key-vault/general/) is created in the user's Subscription.
+- An [Azure Key Vault](https://learn.microsoft.com/en-us/azure/key-vault/general/) has been created in your Subscription.
 
 ### Resources Created
 
@@ -235,24 +270,21 @@ The CLI wizard assumes that:
   - A Kubernetes Service Account the Terraform Runner runs with
   - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources.
 
-The CLI wizard outputs the name of every Azure resources generated and stores them in the state session.
+The CLI wizard outputs the name of every Azure resource generated and stores them in the state session.
 
 To remove the resources created, see [cleaning up](#cleaning-up).
 
 ## Test Application
 
-As an optional step of the wizard CLI, a test application is deployed via Humanitec.  
-This application consists of a container that runs the [nginx image](https://hub.docker.com/_/nginx) in the alpine version. It exposes the internal port 80 on port 8080.
+As an optional step, a test application can be deployed via Humanitec. This application consists of a container that runs the [nginx image](https://hub.docker.com/_/nginx) in the alpine version. It exposes the internal port 80 on port 8080.
+
+## Known Issues
+
+* During initial configuration of your cloud account, you may receive an error about role assumption (e.g.: error code `CRED-005`). To work around the issue, wait ~10 seconds and restart the wizard using state from the previous session.
 
 ## Contact
 
 For questions about this wizard, please reach out to our support team or via [GitHub Issues](https://github.com/humanitec-architecture/setup-wizard/issues).
-
-### Known Issues
-
-Patches for issues listed here will be available soon. 🙂
-
-* During initial configuration of your cloud account, you may receive an error about role assumption (e.g.: error code `CRED-005`). To work around the issue, wait ~10 seconds and restart the wizard using state from the previous session.
 
 ## License & Copyright
 
