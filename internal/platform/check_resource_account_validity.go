@@ -25,7 +25,8 @@ func (p *HumanitecPlatform) CheckResourceAccountValidity(ctx context.Context, ac
 		}
 		return result, nil
 	case 400:
-		result.Error = &resp.JSON400.Error
+		errorMessage := fmt.Sprintf("%s - %s", resp.JSON400.Error, resp.JSON400.Message)
+		result.Error = &errorMessage
 		return result, nil
 	default:
 		return result, fmt.Errorf("humanitec API returned unexpected status code: %d with body: %s", resp.StatusCode(), string(resp.Body))

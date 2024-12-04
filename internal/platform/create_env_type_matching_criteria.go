@@ -40,7 +40,7 @@ func (p *HumanitecPlatform) CreateEnvTypeAndResIdMatchingCriteria(ctx context.Co
 		return fmt.Errorf("humanitec API returned unexpected status code: %d with body: %s", createMatchingCriteriaResp.StatusCode(), string(createMatchingCriteriaResp.Body))
 	}
 
-	message.Warning("Matching criteria created successfully: %+v", createMatchingCriteriaResp)
+	message.Warning("Matching criteria created successfully")
 
 	return nil
 }
