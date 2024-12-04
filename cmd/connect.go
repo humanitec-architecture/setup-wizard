@@ -911,9 +911,10 @@ func ensureConfigRunnerResourceDefinition(ctx context.Context, humPlatform *plat
 		return fmt.Errorf("failed to convert outputs map into a yaml string")
 	}
 
-	secrets := map[string]interface{}{
+	secretsTpl := map[string]interface{}{
 		"agent_url": "",
 	}
+	secrets := map[string]interface{}{}
 	if agentInstalled {
 		var agentUrl = "${resources.agent.outputs.url}"
 		if clusterDef.DriverInputs.SecretRefs != nil {
@@ -924,11 +925,11 @@ func ensureConfigRunnerResourceDefinition(ctx context.Context, humPlatform *plat
 			}
 		}
 		secrets["agent_url"] = agentUrl
+		secretsTpl["agent_url"] = "{{ .driver.secrets.agent_url }}"
 	}
-
 	var secretsForTemplates []byte
-	if len(secrets) > 0 {
-		secretsForTemplates, err = yaml.Marshal(secrets)
+	if len(secretsTpl) > 0 {
+		secretsForTemplates, err = yaml.Marshal(secretsTpl)
 		if err != nil {
 			return fmt.Errorf("failed to convert outputs map into a yaml string")
 		}
@@ -944,6 +945,7 @@ func ensureConfigRunnerResourceDefinition(ctx context.Context, humPlatform *plat
 					"secrets": "\n" + string(secretsForTemplates),
 				},
 			},
+			Secrets: &secrets,
 		},
 		Type: "config",
 	})
