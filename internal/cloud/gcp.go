@@ -746,7 +746,7 @@ func (p *gcpProvider) ConfigureOperator(ctx context.Context, platform *platform.
 			projectID,
 			roleName,
 			IAMSecretManagerRoleDescription,
-			"secretmanager.secrets.create,secretmanager.secrets.delete,secretmanager.secrets.update,secretmanager.versions.add,secretmanager.versions.access,secretmanager.versions.list",
+			"secretmanager.secrets.create,secretmanager.secrets.delete,secretmanager.secrets.update,secretmanager.versions.add,secretmanager.versions.access,secretmanager.versions.list,secretmanager.versions.destroy",
 		)
 		if _, err = iamService.Projects.Roles.Create(
 			"projects/"+projectID,
@@ -756,7 +756,7 @@ func (p *gcpProvider) ConfigureOperator(ctx context.Context, platform *platform.
 					Description: IAMSecretManagerRoleDescription,
 					IncludedPermissions: []string{
 						"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.secrets.update",
-						"secretmanager.versions.add", "secretmanager.versions.access", "secretmanager.versions.list"},
+						"secretmanager.versions.add", "secretmanager.versions.access", "secretmanager.versions.list", "secretmanager.versions.destroy"},
 				},
 				RoleId: roleName,
 			}).Context(ctx).Do(); err != nil {
