@@ -1,6 +1,6 @@
 # Humanitec Setup Wizard
 
-`humanitec-setup-wizard` is a CLI wizard designed to help you easily connect your existing cloud infrastructure to the [Humanitec Platform Orchestrator](https://developer.humanitec.com/platform-orchestrator/overview).
+`humanitec-setup-wizard` is a CLI wizard designed to help you easily connect one of your clusters to the [Humanitec Platform Orchestrator](https://developer.humanitec.com/platform-orchestrator/overview).
 
 Given a [Humanitec organization](https://developer.humanitec.com/concepts/organizations/) and an existing Kubernetes cluster, the wizard will do the following:
   - Connect your [cloud account](https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/overview/) to Humanitec
@@ -184,12 +184,33 @@ In addition, to install the Humanitec Operator and/or Agent, you will need deplo
 
 The CLI wizard assumes that:
 
-- In the target cluster an [Ingress Controller](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is available
+- An [Ingress Controller](https://developer.humanitec.com/integration-and-extensions/networking/ingress-controllers/) is available in the target cluster
 - The [Amazon EKS Pod Identity Agent](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html) is enabled in the selected cluster
 
-### TODO Resources Created
+### Resources Created
 
-XXX TODO XXX
+During the execution of the wizard, the following resources resources will be created in AWS / Kubernetes / Platform Orchestrator:
+
+- An AWS IAM Role named `humanitec-access-tempcreds-<uuid>` to perform [AWS Role Assumption](https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/aws/#aws-role-assumption)
+- A Cloud Account in the Platform Orchestrator using that role
+- An AWS IAM Policy named `humanitec-access-eks-<cluster-name>-<uuid>` defining the access permissions to the cluster, attached to the IAM Role
+- A Kubernetes `ClusterRole` named `humanitec-deploy-access` on the target cluster, which is bound to the IAM Role impersonated by the Platform Orchestrator via a `ClusterRoleBinding` named `humanitec-deploy-access`
+- An EKS Access Entry for the IAM Role
+- An [EKS Cluster Humanitec Resource Definition](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#3-create-an-eks-resource-definition)
+- Humanitec Operator and Humanitec Agent are installed in the EKS cluster via Helm charts
+  - An AWS IAM Role named `humanitec-operator-sa-<uuid>` for the Operator Pod Identity
+  - An AWS IAM Policy named `secrets-manager-access-<uuid>` for Operator access to AWS Secrets Manager, associated to the IAM Role
+  - A Pod Identity association for the role on the cluster
+  - A Secret Store in the Platform Orchestrator and on the cluster
+- To let the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/) execute Terraform code in the specified cluster:
+  - A Kubernetes Namespace where the Terraform Runner runs
+  - A Kubernetes Service Account the Terraform Runner runs with
+  - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources
+  - Resource Definitions in the Platform Orchestrator for a fake Resource and the Runner config
+
+The CLI wizard outputs the name of all resources generated and stores them in the state session.
+
+To remove the resources created, see [cleaning up](#cleaning-up).
 
 ## Provider Documentation: GCP
 
@@ -228,6 +249,11 @@ During the execution of the wizard, the following resources resources will be cr
   - An IAM Custom Role that is assigned to the IAM Service Account impersonated by Humanitec
   - A Kubernetes Cluster Role on the target cluster, which is bound to the IAM Service Account impersonated by Humanitec
   - A [GKE Cluster Humanitec Resource Definition](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#3-create-a-gke-resource-definition)
+- To let the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/) execute Terraform code in the specified cluster:
+  - A Kubernetes Namespace where the Terraform Runner runs
+  - A Kubernetes Service Account the Terraform Runner runs with
+  - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources
+  - Resource Definitions in the Platform Orchestrator for a fake Resource and the Runner config
 
 The CLI wizard outputs the name of every GCP resources generated and stores them in the state session.
 
@@ -265,10 +291,11 @@ The CLI wizard assumes that:
 - `ClusterRole` and `ClusterRoleBinding` objects (default name `humanitec-deploy-access`) in the AKS cluster to set up RBAC and workload identity binding.
 - Humanitec Operator and Humanitec Agent are installed in the AKS cluster via Helm charts.
 - Managed Identity (default name `humanitec-operator-identity`) and Federated Credentials to use workload identity to access Azure Key Vault from Humanitec Operator.
-- To let the [Terraform Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform) execute the Terraform code in the [specified cluster](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform/#running-the-terraform-runner-in-a-target-cluster):
+- To let the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/) execute Terraform code in the specified cluster:
   - A Kubernetes Namespace where the Terraform Runner runs
   - A Kubernetes Service Account the Terraform Runner runs with
-  - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources.
+  - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources
+  - Resource Definitions in the Platform Orchestrator for a fake Resource and the Runner config
 
 The CLI wizard outputs the name of every Azure resource generated and stores them in the state session.
 
