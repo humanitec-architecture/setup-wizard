@@ -999,14 +999,14 @@ func ensureTFRunnerDriverResourceDefinition(ctx context.Context, humPlatform *pl
 		DriverInputs: &client.ValuesSecretsRefsRequest{
 			Values: &map[string]interface{}{
 				"files": map[string]interface{}{
-					"main.tf": `|
-                      resource "random_id" "thing" {
-                        byte_length = 8
-                      }
+					"main.tf": `
+resource "random_id" "thing" {
+	byte_length = 8
+}
 
-                      output "bucket" {
-                        value = random_id.thing.hex
-                      }
+output "bucket" {
+	value = random_id.thing.hex
+}
 `,
 				},
 				"append_logs_to_error": true,
