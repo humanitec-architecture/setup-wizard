@@ -5,20 +5,20 @@
 class HumanitecSetupWizard < Formula
   desc ""
   homepage "https://github.com/humanitec-architecture/setup-wizard"
-  version "0.13.0"
+  version "0.13.1"
 
   on_macos do
-    on_intel do
-      url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.13.0/setup-wizard_0.13.0_darwin_amd64.tar.gz"
-      sha256 "30e044c0c5d02dc0032294b9c980d3734b43f9911b89e748a9883723418a04fa"
+    if Hardware::CPU.intel?
+      url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.13.1/setup-wizard_0.13.1_darwin_amd64.tar.gz"
+      sha256 "d197dd6572784238a3e8b487d0790fc9770f1ba4941237dc19dfbd8abd080e1f"
 
       def install
         bin.install "humanitec-setup-wizard"
       end
     end
-    on_arm do
-      url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.13.0/setup-wizard_0.13.0_darwin_arm64.tar.gz"
-      sha256 "b4f993bafd8ed5f3b485c242ba00c481a7a30d93d7a3217416a6e0b1609519fc"
+    if Hardware::CPU.arm?
+      url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.13.1/setup-wizard_0.13.1_darwin_arm64.tar.gz"
+      sha256 "33c2896e246469607664ff7d8f0fcdb95607d2c1bc55cd93b40c5ae6b6fcd984"
 
       def install
         bin.install "humanitec-setup-wizard"
@@ -27,20 +27,20 @@ class HumanitecSetupWizard < Formula
   end
 
   on_linux do
-    on_intel do
+    if Hardware::CPU.intel?
       if Hardware::CPU.is_64_bit?
-        url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.13.0/setup-wizard_0.13.0_linux_amd64.tar.gz"
-        sha256 "918ac8259cce91f7161c17cebcc5e9546bda019a34f209a3d5e27456f964fe59"
+        url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.13.1/setup-wizard_0.13.1_linux_amd64.tar.gz"
+        sha256 "8dfdb923a02f21309f2d8aab9dc6e4f68005491e9fb5a730497015257037876d"
 
         def install
           bin.install "humanitec-setup-wizard"
         end
       end
     end
-    on_arm do
+    if Hardware::CPU.arm?
       if Hardware::CPU.is_64_bit?
-        url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.13.0/setup-wizard_0.13.0_linux_arm64.tar.gz"
-        sha256 "ff417eb5957e77a201185e84af5003cced87086c3584beb8472b6cd51362e4a1"
+        url "https://github.com/humanitec-architecture/setup-wizard/releases/download/v0.13.1/setup-wizard_0.13.1_linux_arm64.tar.gz"
+        sha256 "a6d3033890bf0c8deb825600bb4e1e27c0d1b1fec708d120bb8ca1e1d7207a27"
 
         def install
           bin.install "humanitec-setup-wizard"
