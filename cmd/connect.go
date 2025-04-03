@@ -35,7 +35,7 @@ var clusterTypeDriverMap = map[string]string{
 }
 
 const (
-	tfRunnerConfigResId = "tf-runner"
+	openTofuContainerRunnerConfigResId = "opentofu-container-runner"
 )
 
 var connectCmd = &cobra.Command{
@@ -162,11 +162,11 @@ Deployments involving these entities will not work anymore proceeding with the W
 		message.Success("Humanitec Operator installed")
 
 		message.DocumentationReference(
-			"Humanitec Terraform Driver allows you to execute Terraform scripts in a target cluster.",
-			"https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform/#running-the-terraform-runner-in-a-target-cluster",
+			"Humanitec OpenTofu Container Driver allows you to execute Container scripts in a target cluster.",
+			"https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-and-opentofu-container-runner/",
 		)
-		if err = createResourcesForTerraformRunnerExecution(ctx, provider, humanitecPlatform); err != nil {
-			return fmt.Errorf("failed to create resources to execute Terraform runner in the cluster: %w", err)
+		if err = createResourcesForContainerRunnerExecution(ctx, provider, humanitecPlatform); err != nil {
+			return fmt.Errorf("failed to create resources to execute Container Runner in the cluster: %w", err)
 		}
 
 		message.DocumentationReference(
@@ -179,9 +179,9 @@ Deployments involving these entities will not work anymore proceeding with the W
 			return fmt.Errorf("failed to select if deploy test application: %w", err)
 		}
 		if ifDeployTestApplication {
-			tfRunnerDriverDefId := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId
-			configDefId := session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId
-			err = deployTestApplication(ctx, humanitecPlatform, humanitecClusterId, tfRunnerDriverDefId, configDefId, isAgentInstalled)
+			openTofuRunnerDriverDefId := session.State.Application.Connect.ContainerRunnerResources.OpenTofuContainerRunnerDriverResourceDefinitionId
+			configDefId := session.State.Application.Connect.ContainerRunnerResources.ConfigRunnerResourceDefinitionId
+			err = deployTestApplication(ctx, humanitecPlatform, humanitecClusterId, openTofuRunnerDriverDefId, configDefId, isAgentInstalled)
 			if err != nil {
 				return fmt.Errorf("failed to deploy test application: %w", err)
 			}
@@ -192,7 +192,7 @@ Deployments involving these entities will not work anymore proceeding with the W
 	},
 }
 
-func deployTestApplication(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform, humanitecClusterId, humanitecTerraformRunnerId, humanitecConfigId string, createAgentMatchingCriteria bool) error {
+func deployTestApplication(ctx context.Context, humanitecPlatform *platform.HumanitecPlatform, humanitecClusterId, humanitecOpenTofuContainerRunnerResId, humanitecConfigId string, createAgentMatchingCriteria bool) error {
 	applicationId, err := message.Prompt("Please enter the id for the application you would like to create in your Humanitec Organization", "my-application")
 	if err != nil {
 		return fmt.Errorf("failed to get application id: %w", err)
@@ -229,12 +229,12 @@ func deployTestApplication(ctx context.Context, humanitecPlatform *platform.Huma
 		return fmt.Errorf("failed to create test application matching criteria for definition with id '%s': %w", humanitecClusterId, err)
 	}
 
-	err = humanitecPlatform.CreateEnvTypeAndResIdMatchingCriteria(ctx, environmentTypeId, humanitecTerraformRunnerId, "")
+	err = humanitecPlatform.CreateEnvTypeAndResIdMatchingCriteria(ctx, environmentTypeId, humanitecOpenTofuContainerRunnerResId, "")
 	if err != nil {
-		return fmt.Errorf("failed to create test application matching criteria for definition with id '%s': %w", humanitecTerraformRunnerId, err)
+		return fmt.Errorf("failed to create test application matching criteria for definition with id '%s': %w", humanitecOpenTofuContainerRunnerResId, err)
 	}
 
-	err = humanitecPlatform.CreateEnvTypeAndResIdMatchingCriteria(ctx, environmentTypeId, humanitecConfigId, tfRunnerConfigResId)
+	err = humanitecPlatform.CreateEnvTypeAndResIdMatchingCriteria(ctx, environmentTypeId, humanitecConfigId, openTofuContainerRunnerConfigResId)
 	if err != nil {
 		return fmt.Errorf("failed to create test application matching criteria for definition with id '%s': %w", humanitecConfigId, err)
 	}
@@ -669,7 +669,7 @@ func createCloudIdentity(ctx context.Context, provider cloud.Provider, humanitec
 	return cloudIdentity, nil
 }
 
-func createResourcesForTerraformRunnerExecution(
+func createResourcesForContainerRunnerExecution(
 	ctx context.Context,
 	provider cloud.Provider, humPlatform *platform.HumanitecPlatform,
 ) error {
@@ -684,33 +684,33 @@ func createResourcesForTerraformRunnerExecution(
 		return fmt.Errorf("failed to get kubeconfig: %w", err)
 	}
 
-	var tfRunnerNamespace = session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerNamespace
-	if tfRunnerNamespace == "" {
-		tfRunnerNamespace, err = message.Prompt("Please enter the id of the namespace where the runner will run. The wizard will create it if it does not exist.", "humanitec-terraform")
+	var containerRunnerNamespace = session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerNamespace
+	if containerRunnerNamespace == "" {
+		containerRunnerNamespace, err = message.Prompt("Please enter the id of the namespace where the runner will run. The wizard will create it if it does not exist.", "humanitec-runner")
 		if err != nil {
 			return fmt.Errorf("failed to get namespace id: %w", err)
 		}
 	}
 
-	if err := ensureTerraformRunnerNamespace(ctx, kubeConfigPath, tfRunnerNamespace); err != nil {
-		return fmt.Errorf("failed to ensure existence of the namespace '%s': %w", tfRunnerNamespace, err)
+	if err := ensureContainerRunnerNamespace(ctx, kubeConfigPath, containerRunnerNamespace); err != nil {
+		return fmt.Errorf("failed to ensure existence of the namespace '%s': %w", containerRunnerNamespace, err)
 	}
 
-	var tfRunnerServiceAccountName = session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sServiceAccount
-	if tfRunnerServiceAccountName == "" {
-		tfRunnerServiceAccountName, err = message.Prompt("Please enter the name of the k8s service account the wizard will create to let the runner run with", "humanitec-tf-runner")
+	var containerRunnerServiceAccountName = session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerK8sServiceAccount
+	if containerRunnerServiceAccountName == "" {
+		containerRunnerServiceAccountName, err = message.Prompt("Please enter the name of the k8s service account the wizard will create to let the runner run with", "humanitec-runner")
 		if err != nil {
 			return fmt.Errorf("failed to get service account name: %w", err)
 		}
 	}
 
-	if err := ensureTerraformServiceAccount(ctx, kubeConfigPath, tfRunnerServiceAccountName, tfRunnerNamespace); err != nil {
-		return fmt.Errorf("failed to ensure existence of the service account '%s': %w", tfRunnerServiceAccountName, err)
+	if err := ensureContainerRunnerServiceAccount(ctx, kubeConfigPath, containerRunnerServiceAccountName, containerRunnerNamespace); err != nil {
+		return fmt.Errorf("failed to ensure existence of the service account '%s': %w", containerRunnerServiceAccountName, err)
 	}
 
-	var configRunnerResourceDefId = session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId
+	var configRunnerResourceDefId = session.State.Application.Connect.ContainerRunnerResources.ConfigRunnerResourceDefinitionId
 	if configRunnerResourceDefId == "" {
-		configRunnerResourceDefId, err = message.Prompt("Please enter the id of the config resource definition that will be created to inject Terraform runner credentials", "my-tf-runner-config")
+		configRunnerResourceDefId, err = message.Prompt("Please enter the id of the config resource definition that will be created to inject Container runner credentials", "wizard-container-runner-config")
 		if err != nil {
 			return fmt.Errorf("failed to get config runner definition id: %w", err)
 		}
@@ -725,21 +725,21 @@ func createResourcesForTerraformRunnerExecution(
 		return fmt.Errorf("failed to ensure existence of the config runner resource definition id '%s': %w", configRunnerResourceDefId, err)
 	}
 
-	var tfRunnerDriverDefId = session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId
-	if tfRunnerDriverDefId == "" {
-		tfRunnerDriverDefId, err = message.Prompt("Please enter the id of the terraform-runner driver resource definition that will be created to provision a fake s3 bucket", "my-vd-tf-fake-s3")
+	var containerRunnerDriverDefId = session.State.Application.Connect.ContainerRunnerResources.OpenTofuContainerRunnerDriverResourceDefinitionId
+	if containerRunnerDriverDefId == "" {
+		containerRunnerDriverDefId, err = message.Prompt("Please enter the id of the opentofu-container-runner driver resource definition that will be created to provision a fake s3 bucket", "wizard-dumb-opentofu-container-s3")
 		if err != nil {
 			return fmt.Errorf("failed to get application id: %w", err)
 		}
 	}
-	if err := ensureTFRunnerDriverResourceDefinition(ctx, humPlatform, tfRunnerDriverDefId); err != nil {
-		return fmt.Errorf("failed to ensure existence of s3 resource definition id '%s': %w", tfRunnerDriverDefId, err)
+	if err := ensureOpenTofuContainerRunnerDriverResourceDefinition(ctx, humPlatform, containerRunnerDriverDefId, containerRunnerNamespace, containerRunnerServiceAccountName); err != nil {
+		return fmt.Errorf("failed to ensure existence of s3 resource definition id '%s': %w", containerRunnerDriverDefId, err)
 	}
 
 	return nil
 }
 
-func ensureTerraformRunnerNamespace(ctx context.Context, kubeConfigPath, namespaceName string) error {
+func ensureContainerRunnerNamespace(ctx context.Context, kubeConfigPath, namespaceName string) error {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 
 	if err != nil {
@@ -751,7 +751,7 @@ func ensureTerraformRunnerNamespace(ctx context.Context, kubeConfigPath, namespa
 		return fmt.Errorf("failed to create a client from kubeconfig: %w", err)
 	}
 
-	message.Info("Creating namespace '%s' where the Terraform Runner should run", namespaceName)
+	message.Info("Creating namespace '%s' where the Container Runner should run", namespaceName)
 	if _, err = clientset.CoreV1().Namespaces().Create(ctx, &v1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: namespaceName,
@@ -767,14 +767,14 @@ func ensureTerraformRunnerNamespace(ctx context.Context, kubeConfigPath, namespa
 		message.Info("Namespace '%s' created", namespaceName)
 	}
 
-	session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerNamespace = namespaceName
+	session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerNamespace = namespaceName
 	if err = session.Save(); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 	return nil
 }
 
-func ensureTerraformServiceAccount(ctx context.Context, kubeConfigPath, serviceAccountName, namespace string) error {
+func ensureContainerRunnerServiceAccount(ctx context.Context, kubeConfigPath, serviceAccountName, namespace string) error {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to read kubeconfig: %w", err)
@@ -784,7 +784,7 @@ func ensureTerraformServiceAccount(ctx context.Context, kubeConfigPath, serviceA
 		return fmt.Errorf("failed to create a client from kubeconfig: %w", err)
 	}
 
-	message.Info("Creating k8s service account '%s' the Terraform Runner should run with", serviceAccountName)
+	message.Info("Creating k8s service account '%s' the Container Runner should run with", serviceAccountName)
 	if _, err = clientset.CoreV1().ServiceAccounts(namespace).Create(ctx, &v1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceAccountName,
@@ -801,7 +801,7 @@ func ensureTerraformServiceAccount(ctx context.Context, kubeConfigPath, serviceA
 		message.Info("k8s service account '%s' created", serviceAccountName)
 	}
 
-	session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sServiceAccount = serviceAccountName
+	session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerK8sServiceAccount = serviceAccountName
 	if err = session.Save(); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
@@ -813,6 +813,11 @@ func ensureTerraformServiceAccount(ctx context.Context, kubeConfigPath, serviceA
 			Namespace: namespace,
 		},
 		Rules: []k8s_rbac.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"create"},
+			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"secrets"},
@@ -866,7 +871,7 @@ func ensureTerraformServiceAccount(ctx context.Context, kubeConfigPath, serviceA
 
 	}
 
-	session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sRole = serviceAccountName
+	session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerK8sRole = serviceAccountName
 	if err = session.Save(); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
@@ -896,15 +901,15 @@ func ensureConfigRunnerResourceDefinition(ctx context.Context, humPlatform *plat
 	if !ok {
 		return fmt.Errorf("failed to map driver type '%s' to a valid cluster type, valid values for driver type are %v", clusterDef.DriverType, maps.Keys(clusterTypeDriverMap))
 	}
+	clusterValues := *clusterDef.DriverInputs.Values
+	clusterValues["cluster_type"] = clusterType
 
 	outputs := map[string]interface{}{
-		"runner": map[string]interface{}{
-			"cluster":         clusterDef.DriverInputs.Values,
-			"cluster_type":    clusterType,
-			"service_account": session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sServiceAccount,
-			"namespace":       session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerNamespace,
-			"account":         accountId,
+		"cluster": map[string]interface{}{
+			"cluster": clusterValues,
+			"account": accountId,
 		},
+		"skip_permission_checks": false,
 	}
 	outputsForTemplates, err := yaml.Marshal(outputs)
 	if err != nil {
@@ -955,14 +960,14 @@ func ensureConfigRunnerResourceDefinition(ctx context.Context, humPlatform *plat
 	switch configCreateResp.StatusCode() {
 	case http.StatusOK:
 		message.Info("Config runner resource definition with id '%s' created", defId)
-		session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId = defId
+		session.State.Application.Connect.ContainerRunnerResources.ConfigRunnerResourceDefinitionId = defId
 		if err = session.Save(); err != nil {
 			return fmt.Errorf("failed to save state: %w", err)
 		}
 		return nil
 	case http.StatusConflict:
 		message.Info("Resource definition with id '%s' already exists", defId)
-		if session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId == defId {
+		if session.State.Application.Connect.ContainerRunnerResources.ConfigRunnerResourceDefinitionId == defId {
 			return nil
 		}
 		configGetResp, err := humPlatform.Client.GetResourceDefinitionWithResponse(ctx, humPlatform.OrganizationId, defId, &client.GetResourceDefinitionParams{})
@@ -977,7 +982,7 @@ func ensureConfigRunnerResourceDefinition(ctx context.Context, humPlatform *plat
 			return fmt.Errorf("failed to get user input: %w", err)
 		} else {
 			if b {
-				session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId = defId
+				session.State.Application.Connect.ContainerRunnerResources.ConfigRunnerResourceDefinitionId = defId
 				if err = session.Save(); err != nil {
 					return fmt.Errorf("failed to save state: %w", err)
 				}
@@ -991,13 +996,17 @@ func ensureConfigRunnerResourceDefinition(ctx context.Context, humPlatform *plat
 	return nil
 }
 
-func ensureTFRunnerDriverResourceDefinition(ctx context.Context, humPlatform *platform.HumanitecPlatform, defId string) error {
+func ensureOpenTofuContainerRunnerDriverResourceDefinition(ctx context.Context, humPlatform *platform.HumanitecPlatform, defId, runnerNamespace, runnerServiceAccount string) error {
 	s3CreateResp, err := humPlatform.Client.CreateResourceDefinitionWithResponse(ctx, humPlatform.OrganizationId, client.CreateResourceDefinitionRequestRequest{
 		Type:       "s3",
-		DriverType: "humanitec/terraform-runner",
+		DriverType: "humanitec/opentofu-container-runner",
 		Id:         defId,
 		DriverInputs: &client.ValuesSecretsRefsRequest{
 			Values: &map[string]interface{}{
+				"runner": map[string]interface{}{
+					"namespace":       runnerNamespace,
+					"service_account": runnerServiceAccount,
+				},
 				"files": map[string]interface{}{
 					"main.tf": `
 resource "random_id" "thing" {
@@ -1009,7 +1018,6 @@ output "bucket" {
 }
 `,
 				},
-				"append_logs_to_error": true,
 			},
 		},
 	},
@@ -1021,14 +1029,14 @@ output "bucket" {
 	switch s3CreateResp.StatusCode() {
 	case http.StatusOK:
 		message.Info("S3 resource definition with id '%s' created", defId)
-		session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId = defId
+		session.State.Application.Connect.ContainerRunnerResources.OpenTofuContainerRunnerDriverResourceDefinitionId = defId
 		if err = session.Save(); err != nil {
 			return fmt.Errorf("failed to save state: %w", err)
 		}
 		return nil
 	case http.StatusConflict:
 		message.Info("Resource definition with id '%s' already exists", defId)
-		if session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId == defId {
+		if session.State.Application.Connect.ContainerRunnerResources.OpenTofuContainerRunnerDriverResourceDefinitionId == defId {
 			return nil
 		}
 		s3GetResp, err := humPlatform.Client.GetResourceDefinitionWithResponse(ctx, humPlatform.OrganizationId, defId, &client.GetResourceDefinitionParams{})
@@ -1043,7 +1051,7 @@ output "bucket" {
 			return fmt.Errorf("failed to get user input: %w", err)
 		} else {
 			if b {
-				session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId = defId
+				session.State.Application.Connect.ContainerRunnerResources.OpenTofuContainerRunnerDriverResourceDefinitionId = defId
 				if err = session.Save(); err != nil {
 					return fmt.Errorf("failed to save state: %w", err)
 				}

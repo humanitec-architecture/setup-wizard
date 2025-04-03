@@ -155,24 +155,24 @@ func deleteHumanitecResources(ctx context.Context, humanitecPlatform *platform.H
 		}
 	}
 
-	if tfRunnerDriverDefId := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId; tfRunnerDriverDefId != "" {
-		message.Info("Humanitec Resource Definition (humanitec/terraform-runner) will be deleted: %s", tfRunnerDriverDefId)
+	if openTofuContainerRunnerDriverDefId := session.State.Application.Connect.ContainerRunnerResources.OpenTofuContainerRunnerDriverResourceDefinitionId; openTofuContainerRunnerDriverDefId != "" {
+		message.Info("Humanitec Resource Definition (humanitec/opentofu-container-runner) will be deleted: %s", openTofuContainerRunnerDriverDefId)
 		proceed, err := message.BoolSelect("Proceed?")
 		if err != nil {
 			return fmt.Errorf("failed to get user input: %w", err)
 		}
 		if proceed {
-			if err = deleteResourceDefinition(ctx, humanitecPlatform, tfRunnerDriverDefId); err != nil {
+			if err = deleteResourceDefinition(ctx, humanitecPlatform, openTofuContainerRunnerDriverDefId); err != nil {
 				return err
 			}
-			session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerDriverResourceDefinitionId = ""
+			session.State.Application.Connect.ContainerRunnerResources.OpenTofuContainerRunnerDriverResourceDefinitionId = ""
 			if err = session.Save(); err != nil {
 				return fmt.Errorf("failed to save state: %w", err)
 			}
 		}
 	}
 
-	if configRunnerDefId := session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId; configRunnerDefId != "" {
+	if configRunnerDefId := session.State.Application.Connect.ContainerRunnerResources.ConfigRunnerResourceDefinitionId; configRunnerDefId != "" {
 		message.Info("Humanitec Resource Definition (echo config runner) will be deleted: %s", configRunnerDefId)
 		proceed, err := message.BoolSelect("Proceed?")
 		if err != nil {
@@ -182,7 +182,7 @@ func deleteHumanitecResources(ctx context.Context, humanitecPlatform *platform.H
 			if err = deleteResourceDefinition(ctx, humanitecPlatform, configRunnerDefId); err != nil {
 				return err
 			}
-			session.State.Application.Connect.TerraformRunnerResouces.ConfigRunnerResourceDefinitionId = ""
+			session.State.Application.Connect.ContainerRunnerResources.ConfigRunnerResourceDefinitionId = ""
 			if err = session.Save(); err != nil {
 				return fmt.Errorf("failed to save state: %w", err)
 			}
@@ -290,73 +290,73 @@ func deleteK8sResources(ctx context.Context, kubeConfigPath string) error {
 		}
 	}
 
-	terraformRunnerNamespace := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerNamespace
-	if terraformRunnerNamespace != "" {
-		if terraformRunnerServiceAccount := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sServiceAccount; terraformRunnerServiceAccount != "" {
-			message.Info("Terraform runner service account '%s' will be deleted from K8s cluster namespace '%s'", terraformRunnerServiceAccount, terraformRunnerNamespace)
+	containerRunnerNamespace := session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerNamespace
+	if containerRunnerNamespace != "" {
+		if containerRunnerServiceAccount := session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerK8sServiceAccount; containerRunnerServiceAccount != "" {
+			message.Info("Container runner service account '%s' will be deleted from K8s cluster namespace '%s'", containerRunnerServiceAccount, containerRunnerNamespace)
 			proceed, err := message.BoolSelect("Proceed?")
 			if err != nil {
 				return fmt.Errorf("failed to get user input: %w", err)
 			}
 			if proceed {
-				if err = clientset.CoreV1().ServiceAccounts(terraformRunnerNamespace).Delete(ctx, terraformRunnerServiceAccount, metav1.DeleteOptions{}); err != nil {
+				if err = clientset.CoreV1().ServiceAccounts(containerRunnerNamespace).Delete(ctx, containerRunnerServiceAccount, metav1.DeleteOptions{}); err != nil {
 					var sErr *kerrors.StatusError
 					if errors.As(err, &sErr) && sErr.ErrStatus.Code == 404 {
-						message.Info("k8s service account '%s' already deleted", terraformRunnerServiceAccount)
+						message.Info("k8s service account '%s' already deleted", containerRunnerServiceAccount)
 					} else {
-						return fmt.Errorf("failed to delete k8s service account '%s': %w", terraformRunnerServiceAccount, err)
+						return fmt.Errorf("failed to delete k8s service account '%s': %w", containerRunnerServiceAccount, err)
 					}
 				} else {
-					message.Debug("k8s service account '%s' deleted", terraformRunnerServiceAccount)
+					message.Debug("k8s service account '%s' deleted", containerRunnerServiceAccount)
 				}
-				session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sServiceAccount = ""
+				session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerK8sServiceAccount = ""
 				if err = session.Save(); err != nil {
 					return fmt.Errorf("failed to save state: %w", err)
 				}
 			}
 		}
 
-		if k8sTerraformRunnerRole := session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sRole; k8sTerraformRunnerRole != "" {
-			message.Info("Terraform runner k8s role '%s' will be deleted from K8s cluster namespace '%s'", k8sTerraformRunnerRole, terraformRunnerNamespace)
+		if k8sContainerRunnerRole := session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerK8sRole; k8sContainerRunnerRole != "" {
+			message.Info("Container runner k8s role '%s' will be deleted from K8s cluster namespace '%s'", k8sContainerRunnerRole, containerRunnerNamespace)
 			proceed, err := message.BoolSelect("Proceed?")
 			if err != nil {
 				return fmt.Errorf("failed to get user input: %w", err)
 			}
 			if proceed {
-				if err = clientset.RbacV1().Roles(terraformRunnerNamespace).Delete(ctx, k8sTerraformRunnerRole, metav1.DeleteOptions{}); err != nil {
+				if err = clientset.RbacV1().Roles(containerRunnerNamespace).Delete(ctx, k8sContainerRunnerRole, metav1.DeleteOptions{}); err != nil {
 					var sErr *kerrors.StatusError
 					if errors.As(err, &sErr) && sErr.ErrStatus.Code == 404 {
-						message.Info("k8s role '%s' already deleted", k8sTerraformRunnerRole)
+						message.Info("k8s role '%s' already deleted", k8sContainerRunnerRole)
 					} else {
-						return fmt.Errorf("failed to delete k8s role '%s': %w", k8sTerraformRunnerRole, err)
+						return fmt.Errorf("failed to delete k8s role '%s': %w", k8sContainerRunnerRole, err)
 					}
 				} else {
-					message.Debug("k8s role '%s' deleted", k8sTerraformRunnerRole)
+					message.Debug("k8s role '%s' deleted", k8sContainerRunnerRole)
 				}
-				session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerK8sRole = ""
+				session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerK8sRole = ""
 				if err = session.Save(); err != nil {
 					return fmt.Errorf("failed to save state: %w", err)
 				}
 			}
 		}
 
-		message.Info("Terraform runner namespace '%s' will be deleted from K8s cluster", terraformRunnerNamespace)
+		message.Info("Container runner namespace '%s' will be deleted from K8s cluster", containerRunnerNamespace)
 		proceed, err := message.BoolSelect("Proceed?")
 		if err != nil {
 			return fmt.Errorf("failed to get user input: %w", err)
 		}
 		if proceed {
-			if err = clientset.CoreV1().Namespaces().Delete(ctx, terraformRunnerNamespace, metav1.DeleteOptions{}); err != nil {
+			if err = clientset.CoreV1().Namespaces().Delete(ctx, containerRunnerNamespace, metav1.DeleteOptions{}); err != nil {
 				var sErr *kerrors.StatusError
 				if errors.As(err, &sErr) && sErr.ErrStatus.Code == 404 {
-					message.Info("namespace '%s' already deleted", terraformRunnerNamespace)
+					message.Info("namespace '%s' already deleted", containerRunnerNamespace)
 				} else {
-					return fmt.Errorf("failed to delete namespace '%s': %w", terraformRunnerNamespace, err)
+					return fmt.Errorf("failed to delete namespace '%s': %w", containerRunnerNamespace, err)
 				}
 			} else {
-				message.Debug("namespace '%s' deleted", terraformRunnerNamespace)
+				message.Debug("namespace '%s' deleted", containerRunnerNamespace)
 			}
-			session.State.Application.Connect.TerraformRunnerResouces.TerraformRunnerNamespace = ""
+			session.State.Application.Connect.ContainerRunnerResources.ContainerRunnerNamespace = ""
 			if err = session.Save(); err != nil {
 				return fmt.Errorf("failed to save state: %w", err)
 			}
