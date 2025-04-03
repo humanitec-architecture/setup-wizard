@@ -3,25 +3,28 @@
 `humanitec-setup-wizard` is a CLI wizard designed to help you easily connect one of your clusters to the [Humanitec Platform Orchestrator](https://developer.humanitec.com/platform-orchestrator/overview).
 
 Given a [Humanitec organization](https://developer.humanitec.com/concepts/organizations/) and an existing Kubernetes cluster, the wizard will do the following:
-  - Connect your [cloud account](https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/overview/) to Humanitec
-  - Create and configure [resource definitions](https://developer.humanitec.com/platform-orchestrator/resources/resource-definitions/) for:
-  - A [Kubernetes cluster](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/)
+
+- Connect your [cloud account](https://developer.humanitec.com/platform-orchestrator/security/cloud-accounts/overview/) to Humanitec
+- Create and configure [resource definitions](https://developer.humanitec.com/platform-orchestrator/resources/resource-definitions/) for:
+- A [Kubernetes cluster](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/)
 - Configure a secret store for [secret references](https://developer.humanitec.com/platform-orchestrator/security/secret-references/)
-- Configure infrastructure & resource definitions required for a [Terraform Runner](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/)
+- Configure infrastructure & resource definitions required for a [OpenTofu Container Runner](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-and-opentofu-container-runner/)
 - Create a test application, with a resource graph similar to this:
   ![Resource graph depicting a simple running workload](images/wizard-sample-app-resource-graph-aws.png)
 
 By default, the wizard will install the following on your Kubernetes cluster, creating a dedicated namespace for each:
+
 - [Humanitec Agent](https://developer.humanitec.com/integration-and-extensions/humanitec-agent/overview/): a secure and easy-to-administer way for the Orchestrator to access private endpoints in your infrastructure.
 - [Humanitec Operator](https://developer.humanitec.com/integration-and-extensions/humanitec-operator/overview/): a Kubernetes operator that controls deployments made with the Orchestrator, capable of and responsible for provisioning the required secret resources in the cluster.
 
 By default, the wizard will create the following resources in your cloud infrastructure, if they do not exist:
+
 - Identity and access resources to connect the cluster to Humanitec, as well as resources required to use temporary credentials for the cloud account (specifics vary by provider)
 - A secret store (in the Platform Orchestrator)
-- To allow the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/) execute the Terraform code in the specified cluster:
-  - A Kubernetes Namespace where the Terraform Runner runs
-  - A Kubernetes Service Account with which the Terraform Runner runs
-  - A Kubernetes Role bound to the Terraform Runner Service Account that enables it to deal with the needed resources.
+- To allow the [OpenTofu Container Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-and-opentofu-container-runner/) execute the [OpenTofu](https://opentofu.org/) code in the specified cluster:
+  - A Kubernetes Namespace where the Container Runner runs
+  - A Kubernetes Service Account with which the Container Runner runs
+  - A Kubernetes Role bound to the Container Runner Service Account that enables it to deal with the needed resources.
 
 After successfully running the wizard, you will have a configured and working application in the Platform Orchestrator. You can reuse many aspects of its configuration to add other applications to Humanitec. As a suggested next step, check out our [in-cluster resource packs](https://developer.humanitec.com/examples/resource-packs/?cloud=in-cluster).
 
@@ -33,7 +36,7 @@ This tool supports infrastructure hosted in AWS, Azure, and Google Cloud. To set
 - A Kubernetes cluster in your target cloud with its API server endpoint accessible from your shell
 - (optional) A secret store in your target cloud. Can be one of AWS Secrets Manager, Azure Key Vault, or Google Cloud Secret Manager
 - A Humanitec account with Administrator permissions
-- `humctl`, the Humanitec CLI: https://developer.humanitec.com/platform-orchestrator/cli/
+- `humctl`, the Humanitec CLI: <https://developer.humanitec.com/platform-orchestrator/cli/>
 
     If you prefer not to use `humctl`, the wizard will prompt you to provide your Humanitec API token directly during the setup process. See our [Authentication documentation](https://developer.humanitec.com/platform-orchestrator/reference/api-references/#authentication) for specifics.
 
@@ -55,7 +58,7 @@ This tool supports infrastructure hosted in AWS, Azure, and Google Cloud. To set
 
 ### Install from pre-built binaries
 
-1. View the latest Github Releases: https://github.com/humanitec-architecture/setup-wizard/releases.
+1. View the latest Github Releases: <https://github.com/humanitec-architecture/setup-wizard/releases>.
 2. Download the binary appropriate for your platform from the latest release.
 
 ### Install from source
@@ -202,10 +205,10 @@ During the execution of the wizard, the following resources resources will be cr
   - An AWS IAM Policy named `secrets-manager-access-<uuid>` for Operator access to AWS Secrets Manager, associated to the IAM Role
   - A Pod Identity association for the role on the cluster
   - A Secret Store in the Platform Orchestrator and on the cluster
-- To let the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/) execute Terraform code in the specified cluster:
-  - A Kubernetes Namespace where the Terraform Runner runs
-  - A Kubernetes Service Account the Terraform Runner runs with
-  - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources
+- To let the [OpenTofu Container Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-and-opentofu-container-runner/) execute Terraform code in the specified cluster:
+  - A Kubernetes Namespace where the Container Runner runs
+  - A Kubernetes Service Account the Container Runner runs with
+  - A Kubernetes Role bound to the Container Runner Service Account to enable it to deal with the needed resources
   - Resource Definitions in the Platform Orchestrator for a fake Resource and the Runner config
 
 The CLI wizard outputs the name of all resources generated and stores them in the state session.
@@ -249,10 +252,10 @@ During the execution of the wizard, the following resources resources will be cr
   - An IAM Custom Role that is assigned to the IAM Service Account impersonated by Humanitec
   - A Kubernetes Cluster Role on the target cluster, which is bound to the IAM Service Account impersonated by Humanitec
   - A [GKE Cluster Humanitec Resource Definition](https://developer.humanitec.com/integration-and-extensions/containerization/kubernetes/#3-create-a-gke-resource-definition)
-- To let the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/) execute Terraform code in the specified cluster:
-  - A Kubernetes Namespace where the Terraform Runner runs
-  - A Kubernetes Service Account the Terraform Runner runs with
-  - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources
+- To let the [OpenTofu Container Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-and-opentofu-container-runner/) execute [OpenTofu](https://opentofu.org/) code in the specified cluster:
+  - A Kubernetes Namespace where the Container Runner runs
+  - A Kubernetes Service Account the Container Runner runs with
+  - A Kubernetes Role bound to the Container Runner Service Account to enable it to deal with the needed resources
   - Resource Definitions in the Platform Orchestrator for a fake Resource and the Runner config
 
 The CLI wizard outputs the name of every GCP resources generated and stores them in the state session.
@@ -291,10 +294,10 @@ The CLI wizard assumes that:
 - `ClusterRole` and `ClusterRoleBinding` objects (default name `humanitec-deploy-access`) in the AKS cluster to set up RBAC and workload identity binding.
 - Humanitec Operator and Humanitec Agent are installed in the AKS cluster via Helm charts.
 - Managed Identity (default name `humanitec-operator-identity`) and Federated Credentials to use workload identity to access Azure Key Vault from Humanitec Operator.
-- To let the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-runner/) execute Terraform code in the specified cluster:
-  - A Kubernetes Namespace where the Terraform Runner runs
-  - A Kubernetes Service Account the Terraform Runner runs with
-  - A Kubernetes Role bound to the Terraform Runner Service Account to enable it to deal with the needed resources
+- To let the [Terraform Runner Driver](https://developer.humanitec.com/integration-and-extensions/drivers/generic-drivers/terraform-and-opentofu-container-runner/) execute [OpenTofu](https://opentofu.org/) code in the specified cluster:
+  - A Kubernetes Namespace where the Container Runner runs
+  - A Kubernetes Service Account the Container Runner runs with
+  - A Kubernetes Role bound to the Container Runner Service Account to enable it to deal with the needed resources
   - Resource Definitions in the Platform Orchestrator for a fake Resource and the Runner config
 
 The CLI wizard outputs the name of every Azure resource generated and stores them in the state session.
@@ -307,7 +310,7 @@ As an optional step, a test application can be deployed via Humanitec. This appl
 
 ## Known Issues
 
-* During initial configuration of your cloud account, you may receive an error about role assumption (e.g.: error code `CRED-005`). To work around the issue, wait ~10 seconds and restart the wizard using state from the previous session.
+- During initial configuration of your cloud account, you may receive an error about role assumption (e.g.: error code `CRED-005`). To work around the issue, wait ~10 seconds and restart the wizard using state from the previous session.
 
 ## Contact
 
