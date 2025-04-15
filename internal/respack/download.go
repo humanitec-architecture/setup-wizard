@@ -124,13 +124,19 @@ func download(url, dest string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
-	defer out.Close()
+
+	defer func() {
+		_ = out.Close()
+	}()
 
 	resp, err := http.Get(url)
 	if err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
@@ -145,7 +151,10 @@ func unzip(src, dest string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open zip file: %w", err)
 	}
-	defer r.Close()
+
+	defer func() {
+		_ = r.Close()
+	}()
 
 	err = os.MkdirAll(dest, 0755)
 	if err != nil {
@@ -184,7 +193,10 @@ func unzip(src, dest string) error {
 			if err != nil {
 				return err
 			}
-			defer f.Close()
+
+			defer func() {
+				_ = f.Close()
+			}()
 
 			_, err = io.Copy(f, rc)
 			if err != nil {

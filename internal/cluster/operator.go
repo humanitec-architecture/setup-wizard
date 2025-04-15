@@ -56,7 +56,7 @@ func InstallUpgradeOperator(kubeConfigPath, namespace string, values map[string]
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	os.RemoveAll(path.Join(homeDir, ".humctl-wizard", "humanitec-operator"))
+	_ = os.RemoveAll(path.Join(homeDir, ".humctl-wizard", "humanitec-operator"))
 
 	actionPull := action.NewPullWithOpts(action.WithConfig(actionConfig))
 	actionPull.Settings = settings

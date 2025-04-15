@@ -705,7 +705,10 @@ func (p *gcpProvider) ConfigureOperator(ctx context.Context, platform *platform.
 	if err != nil {
 		return fmt.Errorf("failed to create a service usage client: %w", err)
 	}
-	defer svcUsage.Close()
+
+	defer func() {
+		_ = svcUsage.Close()
+	}()
 
 	projectID := session.State.GCPProvider.GPCProject.ProjectID
 	projectNumber := session.State.GCPProvider.GPCProject.ProjectNumber

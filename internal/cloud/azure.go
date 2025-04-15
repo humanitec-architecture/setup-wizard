@@ -195,10 +195,10 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 		if err = p.waitManagedIdentityCreated(ctx, session.State.AzureProvider.ResourceGroup, resourceName, idClient); err != nil {
 			return "", fmt.Errorf("error waiting for Managed Identity to be created, %w", err)
 		}
-		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName = *resp.Identity.Name
-		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityClientId = *resp.Identity.Properties.ClientID
-		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityTenantId = *resp.Identity.Properties.TenantID
-		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityPrincipalId = *resp.Identity.Properties.PrincipalID
+		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityName = *resp.Name
+		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityClientId = *resp.Properties.ClientID
+		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityTenantId = *resp.Properties.TenantID
+		session.State.AzureProvider.CreateCloudIdentity.ManagedIdentityPrincipalId = *resp.Properties.PrincipalID
 		if err = session.Save(); err != nil {
 			return "", fmt.Errorf("failed to save state: %w", err)
 		}
@@ -262,7 +262,7 @@ func (p *azureProvider) CreateCloudIdentity(ctx context.Context, humanitecCloudA
 			fedClient); err != nil {
 			return "", fmt.Errorf("error waiting for Federated Credentials to be created, %w", err)
 		}
-		session.State.AzureProvider.CreateCloudIdentity.FederatedCredentialsName = *resp.FederatedIdentityCredential.Name
+		session.State.AzureProvider.CreateCloudIdentity.FederatedCredentialsName = *resp.Name
 		if err = session.Save(); err != nil {
 			return "", fmt.Errorf("failed to save state: %w", err)
 		}
@@ -1100,9 +1100,9 @@ func (p *azureProvider) enableIdentityInCluster(ctx context.Context, opCluster a
 		if err = p.waitManagedIdentityCreated(ctx, resourceGroup, managedIdentityName, idClient); err != nil {
 			return fmt.Errorf("error waiting for Managed Identity to be created, %w", err)
 		}
-		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName = *resp.Identity.Name
-		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityClientId = *resp.Identity.Properties.ClientID
-		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId = *resp.Identity.Properties.PrincipalID
+		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityName = *resp.Name
+		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityClientId = *resp.Properties.ClientID
+		session.State.AzureProvider.ConfigureOperatorAccess.ManagedIdentityPrincipalId = *resp.Properties.PrincipalID
 		if err = session.Save(); err != nil {
 			return fmt.Errorf("failed to save state: %w", err)
 		}
@@ -1162,7 +1162,7 @@ func (p *azureProvider) enableIdentityInCluster(ctx context.Context, opCluster a
 			fedClient); err != nil {
 			return fmt.Errorf("error waiting for Federated Credentials to be created, %w", err)
 		}
-		session.State.AzureProvider.ConfigureOperatorAccess.FederatedCredentialsName = *resp.FederatedIdentityCredential.Name
+		session.State.AzureProvider.ConfigureOperatorAccess.FederatedCredentialsName = *resp.Name
 		if err = session.Save(); err != nil {
 			return fmt.Errorf("failed to save state: %w", err)
 		}
