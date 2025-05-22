@@ -91,7 +91,7 @@ func ensurek8sClusterRole(ctx context.Context, k8sClient *kubernetes.Clientset, 
 			},
 			{
 				APIGroups: []string{""},
-				Resources: []string{"secrets"},
+				Resources: []string{"secrets", "configmaps"},
 				Verbs:     []string{"create", "get", "delete", "list", "update", "deletecollection"},
 			},
 			{
@@ -103,6 +103,11 @@ func ensurek8sClusterRole(ctx context.Context, k8sClient *kubernetes.Clientset, 
 				APIGroups: []string{""},
 				Resources: []string{"pods"},
 				Verbs:     []string{"get", "list"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"events"},
+				Verbs:     []string{"list"},
 			},
 			{
 				APIGroups: []string{""},
